@@ -176,3 +176,4 @@ cython_debug/
 
 main.sh
 logs/
+results_*/
