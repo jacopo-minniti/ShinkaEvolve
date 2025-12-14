@@ -57,6 +57,20 @@ def get_client_model(model_name: str) -> tuple[Union[openai.OpenAI, str], str]:
         genai.configure(api_key=api_key)
         client = "gemini"  # Use string identifier for Gemini
         model_to_use = model_name
+    elif model_name.startswith("local-"):
+        import re
+        # Pattern: local-(model-name)-(http or https url)
+        match = re.match(r"local-(.+?)-(https?://.+)", model_name)
+        if match:
+            model_to_use = match.group(1)
+            url = match.group(2)
+        else:
+            raise ValueError(f"Invalid local model format: {model_name}")
+
+        client = openai.OpenAI(
+            base_url=url,
+            api_key="filler"
+        )
     else:
         raise ValueError(f"Invalid embedding model: {model_name}")
 
@@ -97,7 +111,9 @@ class EmbeddingClient:
         else:
             single_code = False
         # Handle Gemini models
-        if self.model_name in GEMINI_EMBEDDING_MODELS:
+        if self.model_name.startswith("local-"):
+            cost = 0.0
+        elif self.model_name in GEMINI_EMBEDDING_MODELS:
             try:
                 embeddings = []
                 total_tokens = 0
