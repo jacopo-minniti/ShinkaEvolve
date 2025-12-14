@@ -30,6 +30,10 @@ def query_local(
     
     # Store new history for result
     new_msg_history = msg_history + [{"role": "user", "content": msg}]
+    
+    # Handle parameter mismatch: OAI client uses max_tokens, but caller might pass max_output_tokens
+    if "max_output_tokens" in kwargs:
+        max_tokens = kwargs.pop("max_output_tokens")
 
     try:
         if output_model:
