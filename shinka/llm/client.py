@@ -61,42 +61,14 @@ def get_client_llm(model_name: str, structured_output: bool = False) -> Tuple[An
         )
         if structured_output:
             client = instructor.from_openai(client, mode=instructor.Mode.TOOLS_STRICT)
-    elif model_name.startswith("local-"):
-        import re
-        # Pattern: local-<model_name>-<url>
-        # We assume the URL is always at the end and starts with http/https
-        pattern = r"https?://"
-        match = re.search(pattern, model_name)
-        if match:
-            start_index = match.start()
-            url = model_name[start_index:]
-            
-            # Extract model name part between "local-" and the URL
-            # Prefix length of "local-" is 6
-            prefix_len = 6
-            # Substring before URL
-            name_part = model_name[prefix_len:start_index]
-            
-            # Remove trailing hyphen if present (it separates name from url)
-            if name_part.endswith("-"):
-                name_part = name_part[:-1]
-            
-            if name_part:
-                model_name = name_part
-            # If name_part is empty (e.g. local-http://...), model_name keeps being the full string 
-            # or we could leave it as is. 
-        else:
-            raise ValueError(f"Invalid URL in model name: {model_name}")
-        
-        # Create OpenAI-compatible client
+    elif model_name.startswith("Qwen/"):
         client = openai.OpenAI(
             api_key="filler",
-            base_url=url
+            base_url="http://localhost:8000/v1"
         )
-
-        # Structured output mode (if required)
         if structured_output:
-            client = instructor.from_openai(
+             # Assuming standard OpenAI JSON mode or compatible
+             client = instructor.from_openai(
                 client,
                 mode=instructor.Mode.JSON,
             )

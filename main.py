@@ -92,7 +92,7 @@ evo_config = EvolutionConfig(
     language="python",
     # ""
     # llm_models=["gemini-2.5-flash"],
-    llm_models=["local-Qwen/Qwen3-8B-http://localhost:8000/v1"],
+    llm_models=["Qwen/Qwen3-8B"],
     llm_kwargs=dict(
         temperatures=[0.5],
         # reasoning_efforts=["auto", "low", "medium", "high"],
