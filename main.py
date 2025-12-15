@@ -90,9 +90,11 @@ evo_config = EvolutionConfig(
     max_patch_attempts=3,
     job_type="local",
     language="python",
-    llm_models=["local-Qwen/Qwen3-4B-http://localhost:8000/v1"],
+    # ""
+    # llm_models=["gemini-2.5-flash"],
+    llm_models=["local-Qwen/Qwen3-8B-http://localhost:8000/v1"],
     llm_kwargs=dict(
-        temperatures=[0.2],
+        temperatures=[0.5],
         # reasoning_efforts=["auto", "low", "medium", "high"],
         max_tokens=20000,
     ),
@@ -106,7 +108,7 @@ evo_config = EvolutionConfig(
     # llm_dynamic_selection="ucb1",
     # llm_dynamic_selection_kwargs=dict(exploration_coef=1.0),
     init_program_path="examples/circle_packing/initial.py",
-    results_dir="results/cpack_qwen3",
+    results_dir="results/cpack_qwen2.5-8B",
 )
 
 
