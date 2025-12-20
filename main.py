@@ -92,15 +92,15 @@ evo_config = EvolutionConfig(
     language="python",
     # ""
     # llm_models=["gemini-2.5-flash"],
-    llm_models=["Qwen/Qwen3-8B"],
+    llm_models=["Qwen/Qwen3-30B-A3B-Thinking-2507"],
     llm_kwargs=dict(
-        temperatures=[0.5],
+        temperatures=[0.7],
         # reasoning_efforts=["auto", "low", "medium", "high"],
-        max_tokens=20000,
+        max_tokens=40000,
     ),
     meta_rec_interval=10,
     # meta_llm_models=["gpt-5-nano"],
-    meta_llm_kwargs=dict(temperatures=[0.0], max_tokens=16384),
+    meta_llm_kwargs=dict(temperatures=[0.0], max_tokens=30000),
     embedding_model="gemini-embedding-001",
     code_embed_sim_threshold=0.995,
     # novelty_llm_models=["gpt-5-nano"],
@@ -108,7 +108,7 @@ evo_config = EvolutionConfig(
     # llm_dynamic_selection="ucb1",
     # llm_dynamic_selection_kwargs=dict(exploration_coef=1.0),
     init_program_path="examples/circle_packing/initial.py",
-    results_dir="results/cpack_qwen2.5-8B",
+    results_dir="results/cpack_qwen3-30B",
 )
 
 

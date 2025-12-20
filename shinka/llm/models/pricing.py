@@ -195,6 +195,12 @@ REASONING_DEEPSEEK_MODELS = [
     "deepseek-reasoner",
 ]
 
+REASONING_QWEN_MODELS = [
+    "Qwen/Qwen3-8B",
+    "Qwen/Qwen3-4B",
+    "Qwen/Qwen3-30B-A3B-Thinking-2507"
+]
+
 REASONING_GEMINI_MODELS = [
     "gemini-2.5-pro",
     "gemini-2.5-flash",

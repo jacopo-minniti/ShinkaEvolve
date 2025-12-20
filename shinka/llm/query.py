@@ -11,6 +11,7 @@ from .models.pricing import (
     REASONING_OAI_MODELS,
     REASONING_CLAUDE_MODELS,
     REASONING_DEEPSEEK_MODELS,
+    REASONING_QWEN_MODELS,
     REASONING_GEMINI_MODELS,
     REASONING_AZURE_MODELS,
     REASONING_BEDROCK_MODELS,
@@ -176,6 +177,7 @@ def sample_model_kwargs(
             or kwargs_dict["model_name"] in REASONING_BEDROCK_MODELS
             or kwargs_dict["model_name"] in DEEPSEEK_MODELS
             or kwargs_dict["model_name"] in REASONING_DEEPSEEK_MODELS
+            or kwargs_dict["model_name"] in REASONING_QWEN_MODELS
         ):
             kwargs_dict["max_tokens"] = random.choice(max_tokens)
         else:
