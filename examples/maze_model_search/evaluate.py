@@ -257,7 +257,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="data/maze_model_search")
+    parser.add_argument("--data_dir", type=str, default="data/maze_quick")
     parser.add_argument("--train_steps", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--max_params", type=int, default=300_000)

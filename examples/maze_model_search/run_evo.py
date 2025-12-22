@@ -76,12 +76,7 @@ evo_config = EvolutionConfig(
     results_dir="results/maze_qwen3-30B",
 )
 
-def main():
-    # Ensure data exists
-    if not os.path.exists("data/maze_model_search/train.pt"):
-        print("Warning: Data file data/maze_model_search/train.pt not found.")
-        print("Please run: python examples/maze_model_search/generate_data.py")
-        
+if __name__ == "__main__":
     evo_runner = EvolutionRunner(
         evo_config=evo_config,
         job_config=job_config,
@@ -89,6 +84,3 @@ def main():
         verbose=True,
     )
     evo_runner.run()
-
-if __name__ == "__main__":
-    main()

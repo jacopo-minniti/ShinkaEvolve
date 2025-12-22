@@ -1,17 +1,10 @@
-
 # EVOLVE-BLOCK-START
-"""
-Initial solution for the maze model search task.
-This defines the `EvolvedModel` class which Shinka will evolve.
-"""
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class EvolvedModel(nn.Module):
-    # EVOLVE-BLOCK-START
     """
     The model to be evolved. 
     It must implement __init__, forward, and compute_loss (or return loss in forward).
@@ -35,4 +28,4 @@ class EvolvedModel(nn.Module):
         """
         return F.cross_entropy(outputs, batch['target'])
 
-    # EVOLVE-BLOCK-END
+# EVOLVE-BLOCK-END
