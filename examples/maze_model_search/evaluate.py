@@ -1,12 +1,11 @@
-import os
 import argparse
-import numpy as np
-import torch
-import json
-import builtins
 import importlib.util
+import os
 import sys
-from typing import Dict, Any, List, Tuple, Union
+import traceback
+from typing import Dict
+
+import torch
 
 from shinka.core.wrap_eval import save_json_results
 
@@ -59,13 +58,14 @@ def get_local_crop(maze, pos, obs_size, goal_pos):
 def get_stats(model):
     return sum(p.numel() for p in model.parameters())
 
-def train_model(model, train_data, args) -> Tuple[bool, Union[Dict, str]]:
+def train_model(model, train_data, args) -> Dict:
     """
     Trains the model for a fixed number of steps.
-    Returns (success, stats_dict) or (False, error_message).
     """
     if args.max_params and get_stats(model) > args.max_params:
-         return False, f"Max params exceeded: {get_stats(model)} > {args.max_params}"
+        raise ValueError(
+            f"Max params exceeded: {get_stats(model)} > {args.max_params}"
+        )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     
@@ -112,7 +112,9 @@ def train_model(model, train_data, args) -> Tuple[bool, Union[Dict, str]]:
                 elif isinstance(outputs, torch.Tensor):
                     loss = torch.nn.functional.cross_entropy(outputs, action_batch)
                 else:
-                    return False, "Model output format unclear and no compute_loss found"
+                    raise ValueError(
+                        "Model output format unclear and no compute_loss found"
+                    )
             
             loss.backward()
             optimizer.step()
@@ -121,12 +123,11 @@ def train_model(model, train_data, args) -> Tuple[bool, Union[Dict, str]]:
             num_batches += 1
             current_step += 1
 
-    return True, {"train_loss_final": total_loss / num_batches if num_batches else 0.0}
+    return {"train_loss_final": total_loss / num_batches if num_batches else 0.0}
 
-def evaluate_model(model, test_data, args) -> Tuple[bool, Union[Dict, str]]:
+def evaluate_model(model, test_data, args) -> Dict:
     """
     Evaluates the model.
-    Returns (success, stats_dict) or (False, error_message).
     """
     model.eval()
     successes = 0
@@ -173,7 +174,7 @@ def evaluate_model(model, test_data, args) -> Tuple[bool, Union[Dict, str]]:
     success_rate = successes / total if total else 0
     avg_steps = total_steps_success / successes if successes else 0
     
-    return True, {
+    return {
         "test_success_rate": success_rate,
         "avg_steps_to_goal": avg_steps
     }
@@ -183,138 +184,60 @@ def load_module_from_path(path):
     module_name = os.path.basename(path).replace(".py", "")
     
     spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec and spec.loader:
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        return module
-    return None
+    if not spec or not spec.loader:
+        raise ImportError(f"Could not load spec for module at {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
 
 def main(args):
     results_dir = args.results_dir or "results"
     os.makedirs(results_dir, exist_ok=True)
-
-    # Load data
-    train_path = os.path.join(args.data_dir, "train.pt")
-    test_path = os.path.join(args.data_dir, "test.pt")
-    
-    if not os.path.exists(train_path):
-        save_json_results(
-            results_dir=results_dir,
-            metrics={"combined_score": 0.0, "public": {}, "private": {}},
-            correct=False,
-            error="Data not found",
-        )
-        return
-
-    train_data = torch.load(train_path)
-    test_data = torch.load(test_path)
-    
-    # Load EvolvedModel from program_path
-    if not args.program_path:
-        # Fallback to local EvolvedModel if it exists (e.g. for testing this script directly with a class defined here)
-        # But currently no class is defined here.
-        save_json_results(
-            results_dir=results_dir,
-            metrics={"combined_score": 0.0, "public": {}, "private": {}},
-            correct=False,
-            error="No program_path provided",
-        )
-        return
-
     try:
+        train_path = os.path.join(args.data_dir, "train.pt")
+        test_path = os.path.join(args.data_dir, "test.pt")
+        if not os.path.exists(train_path):
+            raise FileNotFoundError(f"Data not found at {train_path}")
+
+        train_data = torch.load(train_path)
+        test_data = torch.load(test_path)
+
+        if not args.program_path:
+            raise ValueError("No program_path provided")
+
         module = load_module_from_path(args.program_path)
-        if module is None or not hasattr(module, "EvolvedModel"):
-             save_json_results(
-                 results_dir=results_dir,
-                 metrics={"combined_score": 0.0, "public": {}, "private": {}},
-                 correct=False,
-                 error=f"Failed to load EvolvedModel from {args.program_path}",
-             )
-             return
-        EvolvedModel = module.EvolvedModel
-    except Exception as e:
-        save_json_results(
-            results_dir=results_dir,
-            metrics={"combined_score": 0.0, "public": {}, "private": {}},
-            correct=False,
-            error=f"Error loading module: {str(e)}",
-        )
-        return
-
-    # Instantiate model
-    try:
-        model = EvolvedModel()
-    except Exception as e:
-        save_json_results(
-            results_dir=results_dir,
-            metrics={"combined_score": 0.0, "public": {}, "private": {}},
-            correct=False,
-            error=f"Error instantiating EvolvedModel: {str(e)}",
-        )
-        return
-        
-    # Check params
-    try:
+        if not hasattr(module, "EvolvedModel"):
+            raise AttributeError(
+                f"Failed to load EvolvedModel from {args.program_path}"
+            )
+        model = module.EvolvedModel()
         param_count = get_stats(model)
-    except Exception as e:
+
+        train_stats = train_model(model, train_data, args)
+        eval_stats = evaluate_model(model, test_data, args)
+
+        fitness = eval_stats["test_success_rate"]
+        metrics = {
+            "combined_score": float(fitness),
+            "public": {**train_stats, **eval_stats, "param_count": param_count},
+            "private": {},
+        }
+        save_json_results(
+            results_dir=results_dir,
+            metrics=metrics,
+            correct=True,
+            error=None,
+        )
+    except Exception as exc:
+        traceback.print_exc()
         save_json_results(
             results_dir=results_dir,
             metrics={"combined_score": 0.0, "public": {}, "private": {}},
             correct=False,
-            error=f"Error counting params: {str(e)}",
+            error=str(exc),
         )
-        return
-    
-    # Train
-    success, train_result = train_model(model, train_data, args)
-    if not success:
-         # train_result is error string
-         save_json_results(
-             results_dir=results_dir,
-             metrics={
-                 "combined_score": 0.0,
-                 "public": {"param_count": param_count},
-                 "private": {},
-             },
-             correct=False,
-             error=train_result,
-         )
-         return
-    
-    train_stats = train_result
-         
-    # Evaluate
-    success, eval_result = evaluate_model(model, test_data, args)
-    if not success:
-         # eval_result is error string
-         save_json_results(
-             results_dir=results_dir,
-             metrics={
-                 "combined_score": 0.0,
-                 "public": {**train_stats, "param_count": param_count},
-                 "private": {},
-             },
-             correct=False,
-             error=eval_result,
-         )
-         return
-
-    eval_stats = eval_result
-    
-    fitness = eval_stats["test_success_rate"]
-
-    metrics = {
-        "combined_score": float(fitness),
-        "public": {**train_stats, **eval_stats, "param_count": param_count},
-        "private": {},
-    }
-    save_json_results(
-        results_dir=results_dir,
-        metrics=metrics,
-        correct=True,
-        error=None,
-    )
+        raise SystemExit(1) from exc
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
