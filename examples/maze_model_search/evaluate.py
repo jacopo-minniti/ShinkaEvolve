@@ -1,5 +1,6 @@
 import argparse
 import importlib.util
+import logging
 import os
 import sys
 import traceback
@@ -8,6 +9,8 @@ from typing import Dict
 import torch
 
 from shinka.core.wrap_eval import save_json_results
+
+logger = logging.getLogger(__name__)
 
 
 def get_local_crop(maze, pos, obs_size, goal_pos):
@@ -79,7 +82,13 @@ def train_model(model, train_data, args) -> Dict:
     total_loss = 0
     num_batches = 0
     current_step = 0
-    
+
+    if not hasattr(model, "compute_loss"):
+        raise ValueError("Model must implement compute_loss(batch, outputs)")
+
+    logger.info("Training start: total_steps=%d, batch_size=%d", args.train_steps, args.batch_size)
+    logger.info("Training data: episodes=%d, steps=%d", len(train_data), len(all_steps))
+
     while current_step < args.train_steps:
         for i in range(0, len(all_steps), args.batch_size):
             if current_step >= args.train_steps: break
@@ -101,20 +110,15 @@ def train_model(model, train_data, args) -> Dict:
             }
             
             optimizer.zero_grad()
-            
-            if hasattr(model, 'compute_loss'):
-                outputs = model(obs_batch)
-                loss = model.compute_loss(batch_dict, outputs)
-            else:
-                outputs = model(obs_batch)
-                if isinstance(outputs, torch.Tensor) and outputs.numel() == 1:
-                    loss = outputs
-                elif isinstance(outputs, torch.Tensor):
-                    loss = torch.nn.functional.cross_entropy(outputs, action_batch)
-                else:
-                    raise ValueError(
-                        "Model output format unclear and no compute_loss found"
-                    )
+
+            outputs = model(obs_batch)
+            loss = model.compute_loss(batch_dict, outputs)
+            if not isinstance(loss, torch.Tensor):
+                raise ValueError("compute_loss must return a torch.Tensor")
+            if loss.numel() != 1:
+                raise ValueError("compute_loss must return a scalar loss tensor")
+            if not torch.isfinite(loss).all():
+                raise ValueError(f"Loss is not finite: {loss.item()}")
             
             loss.backward()
             optimizer.step()
@@ -122,6 +126,11 @@ def train_model(model, train_data, args) -> Dict:
             total_loss += loss.item()
             num_batches += 1
             current_step += 1
+
+            if current_step % 100 == 0:
+                avg_loss = total_loss / max(num_batches, 1)
+                logger.info("Training progress: step=%d/%d avg_loss=%.6f",
+                            current_step, args.train_steps, avg_loss)
 
     return {"train_loss_final": total_loss / num_batches if num_batches else 0.0}
 
@@ -133,9 +142,11 @@ def evaluate_model(model, test_data, args) -> Dict:
     successes = 0
     total = len(test_data)
     total_steps_success = 0
-    
+
+    logger.info("Evaluation start: episodes=%d", total)
+
     with torch.no_grad():
-        for episode in test_data:
+        for ep_idx, episode in enumerate(test_data):
             maze = episode['maze_grid']
             curr_pos = episode['start_pos']
             goal_pos = episode['goal_pos']
@@ -170,10 +181,17 @@ def evaluate_model(model, test_data, args) -> Dict:
                 
                 if 0 <= nr < maze.shape[0] and 0 <= nc < maze.shape[1] and maze[nr, nc] == 1:
                     curr_pos = (nr, nc)
-    
+
+            if (ep_idx + 1) % 50 == 0:
+                logger.info("Evaluation progress: episode=%d/%d successes=%d",
+                            ep_idx + 1, total, successes)
+
     success_rate = successes / total if total else 0
     avg_steps = total_steps_success / successes if successes else 0
-    
+
+    logger.info("Evaluation done: success_rate=%.6f avg_steps=%.2f",
+                success_rate, avg_steps)
+
     return {
         "test_success_rate": success_rate,
         "avg_steps_to_goal": avg_steps
@@ -192,6 +210,10 @@ def load_module_from_path(path):
     return module
 
 def main(args):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - maze_eval - %(levelname)s - %(message)s",
+    )
     results_dir = args.results_dir or "results"
     os.makedirs(results_dir, exist_ok=True)
     try:
@@ -200,19 +222,25 @@ def main(args):
         if not os.path.exists(train_path):
             raise FileNotFoundError(f"Data not found at {train_path}")
 
+        logger.info("Loading data: train=%s test=%s", train_path, test_path)
         train_data = torch.load(train_path)
         test_data = torch.load(test_path)
+        logger.info("Data loaded: train_episodes=%d test_episodes=%d",
+                    len(train_data), len(test_data))
 
         if not args.program_path:
             raise ValueError("No program_path provided")
 
+        logger.info("Loading program: %s", args.program_path)
         module = load_module_from_path(args.program_path)
         if not hasattr(module, "EvolvedModel"):
             raise AttributeError(
                 f"Failed to load EvolvedModel from {args.program_path}"
             )
+        logger.info("Instantiating model")
         model = module.EvolvedModel()
         param_count = get_stats(model)
+        logger.info("Model params: %d", param_count)
 
         train_stats = train_model(model, train_data, args)
         eval_stats = evaluate_model(model, test_data, args)
@@ -229,7 +257,9 @@ def main(args):
             correct=True,
             error=None,
         )
+        logger.info("Results saved: %s", results_dir)
     except Exception as exc:
+        logger.error("Evaluation failed: %s", exc)
         traceback.print_exc()
         save_json_results(
             results_dir=results_dir,

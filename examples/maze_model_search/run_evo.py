@@ -41,7 +41,9 @@ Logits for 4 actions: Up, Down, Left, Right.
 
 Constraints:
 - You must define `class EvolvedModel(nn.Module)`.
-- It must implement `compute_loss(self, batch, outputs)` or return loss from forward.
+- It must implement `compute_loss(self, batch, outputs)`.
+- `forward` should return action logits only (no loss, no extra side effects).
+- `compute_loss` must return a scalar `torch.Tensor` just like standard PyTorch losses.
 - Parameter count must stay under the limit (e.g. 1M).
 - Training budget is fixed. Code efficient, fast-converging architectures.
 - Be creative with:
