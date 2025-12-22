@@ -89,11 +89,13 @@ def train_model(model, train_data, args) -> Tuple[bool, Union[Dict, str]]:
             
             obs_batch = torch.stack([s['obs'] for s in batch_steps])
             action_batch = torch.tensor([s['action'] for s in batch_steps], dtype=torch.long)
+            distance_batch = torch.tensor([s['distance'] for s in batch_steps], dtype=torch.float32)
             
             batch_dict = {
                 'obs': obs_batch,
                 'action': action_batch,
-                'target': action_batch
+                'target': action_batch,
+                'distance': distance_batch
             }
             
             optimizer.zero_grad()

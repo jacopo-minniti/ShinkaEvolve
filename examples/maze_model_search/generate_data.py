@@ -175,6 +175,7 @@ def generate_dataset(args):
                     'obs': obs, # Tensor
                     'pos': curr,
                     'action': action,
+                    'distance': len(path) - 1 - i,
                     'done': False # We record the step TAKEN. At this step done is false.
                 })
             
