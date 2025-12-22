@@ -7,8 +7,21 @@ import json
 from typing import Dict, Any, List, Tuple, Union
 
 # Standard import - assuming running in an environment where imports work
+# Standard import - assuming running in an environment where imports work
+import sys
+# Add the current directory to path so we can import initial.py
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Also add the project root to path so we can import examples module
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 from initial import EvolvedModel
-from examples.maze_model_search.generate_data import get_local_crop
+try:
+    from examples.maze_model_search.generate_data import get_local_crop
+except ImportError:
+    # If project root import fails, try relative import if in same dir
+    from generate_data import get_local_crop
 
 def get_stats(model):
     return sum(p.numel() for p in model.parameters())
