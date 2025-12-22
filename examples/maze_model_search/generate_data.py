@@ -214,13 +214,13 @@ def generate_dataset(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_dir", type=str, default="data/maze_model_search")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--n_train", type=int, default=100) # Small for testing, user can scale
-    parser.add_argument("--n_test", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--n_train", type=int, default=1000)
+    parser.add_argument("--n_test", type=int, default=100)
     parser.add_argument("--maze_size_min", type=int, default=9)
     parser.add_argument("--maze_size_max", type=int, default=15)
     parser.add_argument("--obs_size", type=int, default=7)
-    parser.add_argument("--min_path_len", type=int, default=4)
+    parser.add_argument("--min_path_len", type=int, default=5)
     args = parser.parse_args()
     
     generate_dataset(args)
