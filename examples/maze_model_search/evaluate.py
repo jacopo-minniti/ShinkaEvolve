@@ -8,6 +8,8 @@ import importlib.util
 import sys
 from typing import Dict, Any, List, Tuple, Union
 
+from shinka.core.wrap_eval import save_json_results
+
 
 def get_local_crop(maze, pos, obs_size, goal_pos):
     """
@@ -189,12 +191,20 @@ def load_module_from_path(path):
     return None
 
 def main(args):
+    results_dir = args.results_dir or "results"
+    os.makedirs(results_dir, exist_ok=True)
+
     # Load data
     train_path = os.path.join(args.data_dir, "train.pt")
     test_path = os.path.join(args.data_dir, "test.pt")
     
     if not os.path.exists(train_path):
-        print(json.dumps({"fitness": 0.0, "error": "Data not found"}))
+        save_json_results(
+            results_dir=results_dir,
+            metrics={"combined_score": 0.0, "public": {}, "private": {}},
+            correct=False,
+            error="Data not found",
+        )
         return
 
     train_data = torch.load(train_path)
@@ -204,38 +214,72 @@ def main(args):
     if not args.program_path:
         # Fallback to local EvolvedModel if it exists (e.g. for testing this script directly with a class defined here)
         # But currently no class is defined here.
-        print(json.dumps({"fitness": 0.0, "error": "No program_path provided"}))
+        save_json_results(
+            results_dir=results_dir,
+            metrics={"combined_score": 0.0, "public": {}, "private": {}},
+            correct=False,
+            error="No program_path provided",
+        )
         return
 
     try:
         module = load_module_from_path(args.program_path)
         if module is None or not hasattr(module, "EvolvedModel"):
-             print(json.dumps({"fitness": 0.0, "error": f"Failed to load EvolvedModel from {args.program_path}"}))
+             save_json_results(
+                 results_dir=results_dir,
+                 metrics={"combined_score": 0.0, "public": {}, "private": {}},
+                 correct=False,
+                 error=f"Failed to load EvolvedModel from {args.program_path}",
+             )
              return
         EvolvedModel = module.EvolvedModel
     except Exception as e:
-        print(json.dumps({"fitness": 0.0, "error": f"Error loading module: {str(e)}"}))
+        save_json_results(
+            results_dir=results_dir,
+            metrics={"combined_score": 0.0, "public": {}, "private": {}},
+            correct=False,
+            error=f"Error loading module: {str(e)}",
+        )
         return
 
     # Instantiate model
     try:
         model = EvolvedModel()
     except Exception as e:
-        print(json.dumps({"fitness": 0.0, "error": f"Error instantiating EvolvedModel: {str(e)}"}))
+        save_json_results(
+            results_dir=results_dir,
+            metrics={"combined_score": 0.0, "public": {}, "private": {}},
+            correct=False,
+            error=f"Error instantiating EvolvedModel: {str(e)}",
+        )
         return
         
     # Check params
     try:
         param_count = get_stats(model)
     except Exception as e:
-        print(json.dumps({"fitness": 0.0, "error": f"Error counting params: {str(e)}"}))
+        save_json_results(
+            results_dir=results_dir,
+            metrics={"combined_score": 0.0, "public": {}, "private": {}},
+            correct=False,
+            error=f"Error counting params: {str(e)}",
+        )
         return
     
     # Train
     success, train_result = train_model(model, train_data, args)
     if not success:
          # train_result is error string
-         print(json.dumps({"fitness": 0.0, "error": train_result, "stats": {"param_count": param_count}}))
+         save_json_results(
+             results_dir=results_dir,
+             metrics={
+                 "combined_score": 0.0,
+                 "public": {"param_count": param_count},
+                 "private": {},
+             },
+             correct=False,
+             error=train_result,
+         )
          return
     
     train_stats = train_result
@@ -244,18 +288,33 @@ def main(args):
     success, eval_result = evaluate_model(model, test_data, args)
     if not success:
          # eval_result is error string
-         print(json.dumps({"fitness": 0.0, "error": eval_result, "stats": {**train_stats, "param_count": param_count}}))
+         save_json_results(
+             results_dir=results_dir,
+             metrics={
+                 "combined_score": 0.0,
+                 "public": {**train_stats, "param_count": param_count},
+                 "private": {},
+             },
+             correct=False,
+             error=eval_result,
+         )
          return
 
     eval_stats = eval_result
     
     fitness = eval_stats["test_success_rate"]
-    
-    results = {
-        "fitness": fitness,
-        "stats": {**train_stats, **eval_stats, "param_count": param_count}
+
+    metrics = {
+        "combined_score": float(fitness),
+        "public": {**train_stats, **eval_stats, "param_count": param_count},
+        "private": {},
     }
-    print(json.dumps(results))
+    save_json_results(
+        results_dir=results_dir,
+        metrics=metrics,
+        correct=True,
+        error=None,
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
