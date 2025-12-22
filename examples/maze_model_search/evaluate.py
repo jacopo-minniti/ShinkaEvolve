@@ -3,6 +3,9 @@ import argparse
 import numpy as np
 import torch
 import json
+import builtins
+import importlib.util
+import sys
 from typing import Dict, Any, List, Tuple, Union
 
 
@@ -171,6 +174,18 @@ def evaluate_model(model, test_data, args) -> Tuple[bool, Union[Dict, str]]:
         "avg_steps_to_goal": avg_steps
     }
 
+def load_module_from_path(path):
+    # Get module name from file name
+    module_name = os.path.basename(path).replace(".py", "")
+    
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec and spec.loader:
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+    return None
+
 def main(args):
     # Load data
     train_path = os.path.join(args.data_dir, "train.pt")
@@ -183,11 +198,36 @@ def main(args):
     train_data = torch.load(train_path)
     test_data = torch.load(test_path)
     
+    # Load EvolvedModel from program_path
+    if not args.program_path:
+        # Fallback to local EvolvedModel if it exists (e.g. for testing this script directly with a class defined here)
+        # But currently no class is defined here.
+        print(json.dumps({"fitness": 0.0, "error": "No program_path provided"}))
+        return
+
+    try:
+        module = load_module_from_path(args.program_path)
+        if module is None or not hasattr(module, "EvolvedModel"):
+             print(json.dumps({"fitness": 0.0, "error": f"Failed to load EvolvedModel from {args.program_path}"}))
+             return
+        EvolvedModel = module.EvolvedModel
+    except Exception as e:
+        print(json.dumps({"fitness": 0.0, "error": f"Error loading module: {str(e)}"}))
+        return
+
     # Instantiate model
-    model = EvolvedModel()
+    try:
+        model = EvolvedModel()
+    except Exception as e:
+        print(json.dumps({"fitness": 0.0, "error": f"Error instantiating EvolvedModel: {str(e)}"}))
+        return
         
     # Check params
-    param_count = get_stats(model)
+    try:
+        param_count = get_stats(model)
+    except Exception as e:
+        print(json.dumps({"fitness": 0.0, "error": f"Error counting params: {str(e)}"}))
+        return
     
     # Train
     success, train_result = train_model(model, train_data, args)
@@ -217,12 +257,14 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="data/maze_quick")
+    parser.add_argument("--data_dir", type=str, default="data/maze_model_search")
     parser.add_argument("--train_steps", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--max_params", type=int, default=300_000)
     parser.add_argument("--obs_size", type=int, default=7)
     parser.add_argument("--maze_size_max", type=int, default=15)
+    parser.add_argument("--program_path", type=str, required=False, help="Path to the python script containing EvolvedModel")
+    parser.add_argument("--results_dir", type=str, required=False, help="Directory to save results")
     
     args = parser.parse_args()
     main(args)
