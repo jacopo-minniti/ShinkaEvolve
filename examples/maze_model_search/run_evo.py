@@ -1,4 +1,3 @@
-
 from shinka.core import EvolutionRunner, EvolutionConfig
 from shinka.database import DatabaseConfig
 from shinka.launch import LocalJobConfig
@@ -74,7 +73,7 @@ evo_config = EvolutionConfig(
     embedding_model="gemini-embedding-001",
     code_embed_sim_threshold=0.995,
     init_program_path="examples/maze_model_search/initial.py",
-    results_dir="results/maze_search",
+    results_dir="results/maze_qwen3-30B",
 )
 
 def main():

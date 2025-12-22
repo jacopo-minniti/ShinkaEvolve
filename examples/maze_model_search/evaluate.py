@@ -1,4 +1,3 @@
-
 import os
 import argparse
 import numpy as np
@@ -6,22 +5,51 @@ import torch
 import json
 from typing import Dict, Any, List, Tuple, Union
 
-# Standard import - assuming running in an environment where imports work
-# Standard import - assuming running in an environment where imports work
-import sys
-# Add the current directory to path so we can import initial.py
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-# Also add the project root to path so we can import examples module
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
-if project_root not in sys.path:
-    sys.path.append(project_root)
 
-from initial import EvolvedModel
-try:
-    from examples.maze_model_search.generate_data import get_local_crop
-except ImportError:
-    # If project root import fails, try relative import if in same dir
-    from generate_data import get_local_crop
+def get_local_crop(maze, pos, obs_size, goal_pos):
+    """
+    Extracts a local square crop centered at pos.
+    Channels: 
+    0: Walls (1 if wall, 0 if free)
+    1: Goal (1 if goal is here, 0 otherwise)
+    
+    Returns tensor of shape (2, obs_size, obs_size)
+    """
+    rows, cols = maze.shape
+    half = obs_size // 2
+    r, c = pos
+    
+    crop = torch.zeros((2, obs_size, obs_size), dtype=torch.float32)
+    
+    # Pad maze with walls for out-of-bounds extraction
+    pad_maze = torch.zeros((rows + 2 * half, cols + 2 * half), dtype=torch.int8) # 0 is wall here for ease? 
+    # Actually, in maze: 0=wall, 1=free.
+    # Let's make pad_maze consistent: 0=wall.
+    
+    # Place actual maze in center of padded
+    pad_maze[half:rows+half, half:cols+half] = maze
+    
+    # Extract window
+    # padded coords: r+half, c+half is the center
+    # slice: (r+half)-half : (r+half)+half+1
+    #      = r : r+obs_size
+    window = pad_maze[r:r+obs_size, c:c+obs_size]
+    
+    # Channel 0: Walls. pad_maze has 0=wall, 1=free. We want 1=wall, 0=free.
+    crop[0] = (window == 0).float()
+    
+    # Channel 1: Goal
+    # Goal is at goal_pos in original coords.
+    # In window coords (relative to r-half, c-half):
+    # gr = goal_r - (r - half)
+    # gc = goal_c - (c - half)
+    gr = goal_pos[0] - (r - half)
+    gc = goal_pos[1] - (c - half)
+    
+    if 0 <= gr < obs_size and 0 <= gc < obs_size:
+        crop[1, gr, gc] = 1.0
+        
+    return crop
 
 def get_stats(model):
     return sum(p.numel() for p in model.parameters())
@@ -189,10 +217,10 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="data/maze_model_search")
-    parser.add_argument("--train_steps", type=int, default=100)
+    parser.add_argument("--data_dir", type=str, default="data/maze_quick")
+    parser.add_argument("--train_steps", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--max_params", type=int, default=1_000_000)
+    parser.add_argument("--max_params", type=int, default=300_000)
     parser.add_argument("--obs_size", type=int, default=7)
     parser.add_argument("--maze_size_max", type=int, default=15)
     
