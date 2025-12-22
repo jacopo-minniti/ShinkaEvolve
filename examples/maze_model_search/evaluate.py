@@ -61,7 +61,7 @@ def get_local_crop(maze, pos, obs_size, goal_pos):
 def get_stats(model):
     return sum(p.numel() for p in model.parameters())
 
-def train_model(model, train_data, args) -> Dict:
+def train_model(model, train_data, args, device) -> Dict:
     """
     Trains the model for a fixed number of steps.
     """
@@ -86,7 +86,12 @@ def train_model(model, train_data, args) -> Dict:
     if not hasattr(model, "compute_loss"):
         raise ValueError("Model must implement compute_loss(batch, outputs)")
 
-    logger.info("Training start: total_steps=%d, batch_size=%d", args.train_steps, args.batch_size)
+    logger.info(
+        "Training start: total_steps=%d, batch_size=%d, device=%s",
+        args.train_steps,
+        args.batch_size,
+        device,
+    )
     logger.info("Training data: episodes=%d, steps=%d", len(train_data), len(all_steps))
 
     while current_step < args.train_steps:
@@ -98,9 +103,13 @@ def train_model(model, train_data, args) -> Dict:
             
             batch_steps = [all_steps[idx] for idx in indices]
             
-            obs_batch = torch.stack([s['obs'] for s in batch_steps])
-            action_batch = torch.tensor([s['action'] for s in batch_steps], dtype=torch.long)
-            distance_batch = torch.tensor([s['distance'] for s in batch_steps], dtype=torch.float32)
+            obs_batch = torch.stack([s['obs'] for s in batch_steps]).to(device)
+            action_batch = torch.tensor(
+                [s['action'] for s in batch_steps], dtype=torch.long, device=device
+            )
+            distance_batch = torch.tensor(
+                [s['distance'] for s in batch_steps], dtype=torch.float32, device=device
+            )
             
             batch_dict = {
                 'obs': obs_batch,
@@ -134,7 +143,7 @@ def train_model(model, train_data, args) -> Dict:
 
     return {"train_loss_final": total_loss / num_batches if num_batches else 0.0}
 
-def evaluate_model(model, test_data, args) -> Dict:
+def evaluate_model(model, test_data, args, device) -> Dict:
     """
     Evaluates the model.
     """
@@ -159,7 +168,11 @@ def evaluate_model(model, test_data, args) -> Dict:
                     total_steps_success += step
                     break
                 
-                obs = get_local_crop(maze, curr_pos, args.obs_size, goal_pos).unsqueeze(0)
+                obs = (
+                    get_local_crop(maze, curr_pos, args.obs_size, goal_pos)
+                    .unsqueeze(0)
+                    .to(device)
+                )
                 
                 outputs = model(obs)
                 
@@ -242,8 +255,12 @@ def main(args):
         param_count = get_stats(model)
         logger.info("Model params: %d", param_count)
 
-        train_stats = train_model(model, train_data, args)
-        eval_stats = evaluate_model(model, test_data, args)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info("Using device: %s", device)
+        model = model.to(device)
+
+        train_stats = train_model(model, train_data, args, device)
+        eval_stats = evaluate_model(model, test_data, args, device)
 
         fitness = eval_stats["test_success_rate"]
         metrics = {
