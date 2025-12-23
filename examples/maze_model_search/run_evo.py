@@ -44,8 +44,8 @@ Constraints:
 - It must implement `compute_loss(self, batch, outputs)`.
 - `forward` should return action logits only (no loss, no extra side effects).
 - `compute_loss` must return a scalar `torch.Tensor` just like standard PyTorch losses.
-- Parameter count must stay under the limit (e.g. 1M).
-- Training budget is fixed. Code efficient, fast-converging architectures.
+- Parameter count must stay under the limit (100k).
+- Training budget is fixed and very limited (2k steps). Code efficient, fast-converging architectures.
 - Be creative with:
     - Experience replay buffers (if you implement them inside the model/loss loop)
     - Memory (RNNs, GRUs, LSTMs) to handle partial observability
@@ -59,7 +59,7 @@ evo_config = EvolutionConfig(
     task_sys_msg=task_sys_msg,
     patch_types=["diff", "full", "cross"],
     patch_type_probs=[0.6, 0.3, 0.1],
-    num_generations=50,
+    num_generations=100,
     max_parallel_jobs=1,
     max_patch_resamples=3,
     max_patch_attempts=3,
@@ -68,14 +68,14 @@ evo_config = EvolutionConfig(
     llm_models=["Qwen/Qwen3-30B-A3B-Thinking-2507"],
     llm_kwargs=dict(
         temperatures=[0.7],
-        max_tokens=4000,
+        max_tokens=20000,
     ),
     meta_rec_interval=10,
     meta_llm_kwargs=dict(temperatures=[0.0], max_tokens=2000),
     embedding_model="gemini-embedding-001",
     code_embed_sim_threshold=0.995,
     init_program_path="examples/maze_model_search/initial.py",
-    results_dir="results/maze_qwen3-30B",
+    results_dir="results/maze_qwen3-30B-v2",
 )
 
 if __name__ == "__main__":

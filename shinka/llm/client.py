@@ -64,7 +64,7 @@ def get_client_llm(model_name: str, structured_output: bool = False) -> Tuple[An
     elif model_name.startswith("Qwen/"):
         client = openai.OpenAI(
             api_key="filler",
-            base_url="http://localhost:8000/v1"
+            base_url="http://localhost:8001/v1"
         )
         if structured_output:
              # Assuming standard OpenAI JSON mode or compatible

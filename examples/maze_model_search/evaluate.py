@@ -291,7 +291,7 @@ if __name__ == "__main__":
     parser.add_argument("--data_dir", type=str, default="data/maze_quick")
     parser.add_argument("--train_steps", type=int, default=2000)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--max_params", type=int, default=300_000)
+    parser.add_argument("--max_params", type=int, default=100_000)
     parser.add_argument("--obs_size", type=int, default=7)
     parser.add_argument("--maze_size_max", type=int, default=15)
     parser.add_argument("--program_path", type=str, required=False, help="Path to the python script containing EvolvedModel")
