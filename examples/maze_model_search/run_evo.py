@@ -70,10 +70,6 @@ evo_config = EvolutionConfig(
         temperatures=[0.7],
         max_tokens=20000,
     ),
-    meta_rec_interval=10,
-    meta_llm_kwargs=dict(temperatures=[0.0], max_tokens=2000),
-    embedding_model="gemini-embedding-001",
-    code_embed_sim_threshold=0.995,
     init_program_path="examples/maze_model_search/initial.py",
     results_dir="results/maze_qwen3-30B-v2",
 )

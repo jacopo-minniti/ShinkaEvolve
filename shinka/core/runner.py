@@ -15,22 +15,7 @@ from dataclasses import dataclass, field, asdict
 from subprocess import Popen
 from shinka.launch import JobScheduler, JobConfig, ProcessWithLogging
 from shinka.database import ProgramDatabase, DatabaseConfig, Program
-from shinka.llm import (
-    LLMClient,
-    extract_between,
-    EmbeddingClient,
-    BanditBase,
-    AsymmetricUCB,
-)
-from shinka.edit import (
-    apply_diff_patch,
-    apply_full_patch,
-    summarize_diff,
-    redact_immutable,
-)
 from shinka.core.sampler import PromptSampler
-from shinka.core.summarizer import MetaSummarizer
-from shinka.core.novelty_judge import NoveltyJudge
 from shinka.logo import print_gradient_logo
 
 FOLDER_PREFIX = "gen"
@@ -51,17 +36,8 @@ class EvolutionConfig:
     llm_dynamic_selection: Optional[Union[str, BanditBase]] = None
     llm_dynamic_selection_kwargs: dict = field(default_factory=lambda: {})
     llm_kwargs: dict = field(default_factory=lambda: {})
-    meta_rec_interval: Optional[int] = None
-    meta_llm_models: Optional[List[str]] = None
-    meta_llm_kwargs: dict = field(default_factory=lambda: {})
-    meta_max_recommendations: int = 5
-    embedding_model: Optional[str] = None
     init_program_path: Optional[str] = "initial.py"
     results_dir: Optional[str] = None
-    max_novelty_attempts: int = 3
-    code_embed_sim_threshold: float = 1.0
-    novelty_llm_models: Optional[List[str]] = None
-    novelty_llm_kwargs: dict = field(default_factory=lambda: {})
     use_text_feedback: bool = False
 
 
@@ -79,9 +55,6 @@ class RunningJob:
     top_k_insp_ids: List[str]
     code_diff: Optional[str]
     meta_patch_data: Optional[dict]
-    code_embedding: List[float] = field(default_factory=list)
-    embed_cost: float = 0.0
-    novelty_cost: float = 0.0
 
 
 # Set up logging
@@ -163,7 +136,7 @@ class EvolutionRunner:
             evo_config.embedding_model or "text-embedding-3-small"
         )
         self.db = ProgramDatabase(
-            config=db_config, embedding_model=embedding_model_to_use
+            config=db_config, embedding_model=None
         )
         self.scheduler = JobScheduler(
             job_type=evo_config.job_type,
@@ -177,31 +150,6 @@ class EvolutionRunner:
             **evo_config.llm_kwargs,
             verbose=verbose,
         )
-        if evo_config.embedding_model is not None:
-            self.embedding = EmbeddingClient(
-                model_name=evo_config.embedding_model,
-                verbose=verbose,
-            )
-        else:
-            self.embedding = None
-
-        if evo_config.meta_llm_models is not None:
-            self.meta_llm = LLMClient(
-                model_names=evo_config.meta_llm_models,
-                **evo_config.meta_llm_kwargs,
-                verbose=verbose,
-            )
-        else:
-            self.meta_llm = None
-
-        if evo_config.novelty_llm_models is not None:
-            self.novelty_llm = LLMClient(
-                model_names=evo_config.novelty_llm_models,
-                **evo_config.novelty_llm_kwargs,
-                verbose=verbose,
-            )
-        else:
-            self.novelty_llm = None
 
         # Initialize PromptSampler for handling LLM code prompts
         self.prompt_sampler = PromptSampler(
@@ -210,22 +158,6 @@ class EvolutionRunner:
             patch_types=evo_config.patch_types,
             patch_type_probs=evo_config.patch_type_probs,
             use_text_feedback=evo_config.use_text_feedback,
-        )
-
-        # Initialize MetaSummarizer for meta-recommendations
-        self.meta_summarizer = MetaSummarizer(
-            meta_llm_client=self.meta_llm,
-            language=evo_config.language,
-            use_text_feedback=evo_config.use_text_feedback,
-            max_recommendations=evo_config.meta_max_recommendations,
-        )
-
-        # Initialize NoveltyJudge for novelty assessment
-        self.novelty_judge = NoveltyJudge(
-            novelty_llm_client=self.novelty_llm,
-            language=evo_config.language,
-            similarity_threshold=evo_config.code_embed_sim_threshold,
-            max_novelty_attempts=evo_config.max_novelty_attempts,
         )
 
         # Initialize rich console for formatted output
@@ -265,8 +197,6 @@ class EvolutionRunner:
             )
             logger.info("=" * 80)
             self._update_best_solution()
-            # Restore meta memory state when resuming
-            self._restore_meta_memory()
         else:
             self.completed_generations = 0
 
@@ -404,13 +334,6 @@ class EvolutionRunner:
 
             # All jobs are now handled by the main loop above
 
-        # Perform final meta summary for any remaining unprocessed programs
-        best_program = self.db.get_best_program()
-        self.meta_summarizer.perform_final_summary(str(self.results_dir), best_program)
-
-        # Save final meta memory state
-        self._save_meta_memory()
-
         self.db.print_summary()
         logger.info(f"Evolution completed! {self.completed_generations} generations")
         logger.info("=" * 80)
@@ -543,7 +466,6 @@ class EvolutionRunner:
         # Run the evaluation synchronously
         results, rtime = self.scheduler.run(exec_fname, results_dir)
 
-        code_embedding, e_cost = self.get_code_embedding(exec_fname)
 
         # Read the evaluated code for database insertion
         try:
@@ -583,7 +505,7 @@ class EvolutionRunner:
             archive_inspiration_ids=[],
             top_k_inspiration_ids=[],
             code_diff=None,
-            embedding=code_embedding,
+            embedding=[],
             correct=correct_val,
             combined_score=combined_score,
             public_metrics=public_metrics,
@@ -592,8 +514,6 @@ class EvolutionRunner:
             metadata={
                 "compute_time": rtime,
                 "api_costs": api_costs,
-                "embed_cost": e_cost,
-                "novelty_cost": 0.0,  # No novelty cost for generation 0
                 "patch_type": patch_type,
                 "patch_name": patch_name,
                 "patch_description": patch_description,
@@ -601,7 +521,6 @@ class EvolutionRunner:
                 "stderr_log": stderr_log,
             },
         )
-
         self.db.add(db_program, verbose=True)
         if self.llm_selection is not None:
             self.llm_selection.set_baseline_score(
@@ -609,44 +528,6 @@ class EvolutionRunner:
             )
         self.db.save()
         self._update_best_solution()
-
-        # Add the evaluated program to meta memory tracking
-        self.meta_summarizer.add_evaluated_program(db_program)
-
-        # Check if we should update meta memory after adding this program
-        if self.meta_summarizer.should_update_meta(self.evo_config.meta_rec_interval):
-            logger.info(
-                f"Updating meta memory after processing "
-                f"{len(self.meta_summarizer.evaluated_since_last_meta)} programs..."
-            )
-            best_program = self.db.get_best_program()
-            updated_recs, meta_cost = self.meta_summarizer.update_meta_memory(
-                best_program
-            )
-            if updated_recs:
-                # Write meta output file for generation 0
-                self.meta_summarizer.write_meta_output(str(self.results_dir))
-                # Store meta cost for tracking
-                if meta_cost > 0:
-                    logger.info(
-                        f"Meta recommendation generation cost: ${meta_cost:.4f}"
-                    )
-                    # Add meta cost to this program's metadata (the one that triggered the update)
-                    if db_program.metadata is None:
-                        db_program.metadata = {}
-                    db_program.metadata["meta_cost"] = meta_cost
-                    # Update the program in the database with the new metadata
-                    import json
-
-                    metadata_json = json.dumps(db_program.metadata)
-                    self.db.cursor.execute(
-                        "UPDATE programs SET metadata = ? WHERE id = ?",
-                        (metadata_json, db_program.id),
-                    )
-                    self.db.conn.commit()
-
-        # Save meta memory state after each job completion
-        self._save_meta_memory()
 
     def _update_completed_generations(self):
         """
@@ -687,9 +568,6 @@ class EvolutionRunner:
         results_dir = f"{self.results_dir}/{FOLDER_PREFIX}_{current_gen}/results"
         Path(results_dir).mkdir(parents=True, exist_ok=True)
 
-        # Get current meta-recommendations for this job
-        meta_recs, meta_summary, meta_scratch = self.meta_summarizer.get_current()
-
         # Sample parent and inspiration programs
         if current_gen == 0:
             parent_id = None
@@ -700,96 +578,37 @@ class EvolutionRunner:
             # Initial program already copied in setup_initial_program
         else:
             api_costs = 0
-            embed_cost = 0
-            novelty_cost = 0.0
-            novelty_checks_performed = 0
-            # Loop over novelty attempts
-            for nov_attempt in range(self.evo_config.max_novelty_attempts):
-                # Loop over patch resamples - including parents
-                for resample in range(self.evo_config.max_patch_resamples):
-                    (
-                        parent_program,
-                        archive_programs,
-                        top_k_programs,
-                    ) = self.db.sample(
-                        target_generation=current_gen,
-                        novelty_attempt=nov_attempt + 1,
-                        max_novelty_attempts=self.evo_config.max_novelty_attempts,
-                        resample_attempt=resample + 1,
-                        max_resample_attempts=self.evo_config.max_patch_resamples,
-                    )
-                    archive_insp_ids = [p.id for p in archive_programs]
-                    top_k_insp_ids = [p.id for p in top_k_programs]
-                    parent_id = parent_program.id
-                    # Run patch (until success with max attempts)
-                    code_diff, meta_patch_data, num_applied_attempt = self.run_patch(
-                        parent_program,
-                        archive_programs,
-                        top_k_programs,
-                        current_gen,
-                        novelty_attempt=nov_attempt + 1,
-                        resample_attempt=resample + 1,
-                    )
-                    api_costs += meta_patch_data["api_costs"]
-                    if (
-                        meta_patch_data["error_attempt"] is None
-                        and num_applied_attempt > 0
-                    ):
-                        meta_patch_data["api_costs"] = api_costs
-                        break
-
-                # Get the code embedding for the evaluated code
-                code_embedding, e_cost = self.get_code_embedding(exec_fname)
-                embed_cost += e_cost
-
-                if not code_embedding:
-                    self.novelty_judge.log_novelty_skip_message("no embedding")
-                    break
-
-                # Use NoveltyJudge for novelty assessment with rejection sampling
-                if self.novelty_judge.should_check_novelty(
-                    code_embedding, current_gen, parent_program, self.db
+            # Loop over patch resamples - including parents
+            for resample in range(self.evo_config.max_patch_resamples):
+                (
+                    parent_program,
+                    archive_programs,
+                    top_k_programs,
+                ) = self.db.sample(
+                    target_generation=current_gen,
+                    novelty_attempt=1,
+                    max_novelty_attempts=1,
+                    resample_attempt=resample + 1,
+                    max_resample_attempts=self.evo_config.max_patch_resamples,
+                )
+                archive_insp_ids = [p.id for p in archive_programs]
+                top_k_insp_ids = [p.id for p in top_k_programs]
+                parent_id = parent_program.id
+                # Run patch (until success with max attempts)
+                code_diff, meta_patch_data, num_applied_attempt = self.run_patch(
+                    parent_program,
+                    archive_programs,
+                    top_k_programs,
+                    current_gen,
+                    resample_attempt=resample + 1,
+                )
+                api_costs += meta_patch_data["api_costs"]
+                if (
+                    meta_patch_data["error_attempt"] is None
+                    and num_applied_attempt > 0
                 ):
-                    should_accept, novelty_metadata = (
-                        self.novelty_judge.assess_novelty_with_rejection_sampling(
-                            exec_fname, code_embedding, parent_program, self.db
-                        )
-                    )
-
-                    # Update costs and metadata from novelty assessment
-                    novelty_cost += novelty_metadata.get("novelty_total_cost", 0.0)
-                    novelty_checks_performed = novelty_metadata.get(
-                        "novelty_checks_performed", 0
-                    )
-                    novelty_explanation = novelty_metadata.get(
-                        "novelty_explanation", ""
-                    )
-
-                    if should_accept:
-                        break
-                    # If not accepted, continue to next attempt (rejection sampling)
-                else:
-                    if not self.db.island_manager or not hasattr(
-                        self.db.island_manager, "are_all_islands_initialized"
-                    ):
-                        self.novelty_judge.log_novelty_skip_message("no island manager")
-                    elif not self.db.island_manager.are_all_islands_initialized():
-                        self.novelty_judge.log_novelty_skip_message(
-                            "not all islands initialized yet"
-                        )
+                    meta_patch_data["api_costs"] = api_costs
                     break
-
-        # Add meta-recommendations/summary/scratchpad to meta_patch_data
-        if meta_recs is not None:
-            meta_patch_data["meta_recommendations"] = meta_recs
-            meta_patch_data["meta_summary"] = meta_summary
-            meta_patch_data["meta_scratch_pad"] = meta_scratch
-
-        # Add novelty check information to meta_patch_data if any checks were performed
-        if current_gen > 0 and novelty_checks_performed > 0:
-            meta_patch_data["novelty_checks_performed"] = novelty_checks_performed
-            meta_patch_data["novelty_cost"] = novelty_cost
-            meta_patch_data["novelty_explanation"] = novelty_explanation
 
         # Submit the job asynchronously
         job_id = self.scheduler.submit_async(exec_fname, results_dir)
@@ -806,9 +625,6 @@ class EvolutionRunner:
             top_k_insp_ids=top_k_insp_ids,
             code_diff=code_diff,
             meta_patch_data=meta_patch_data,
-            code_embedding=code_embedding,
-            embed_cost=embed_cost,
-            novelty_cost=novelty_cost,
         )
         self.running_jobs.append(running_job)
 
@@ -853,13 +669,9 @@ class EvolutionRunner:
             evaluated_code = ""
 
         # Use pre-computed embedding and novelty costs
-        code_embedding = job.code_embedding
-        e_cost = job.embed_cost
-        n_cost = job.novelty_cost
         if self.verbose:
             logger.debug(
-                f"=> Using pre-computed embedding for job {job.job_id}, "
-                f"embed cost: {e_cost:.4f}, novelty cost: {n_cost:.4f}"
+                f"=> Processing completed job {job.job_id}"
             )
 
         correct_val = False
@@ -892,7 +704,7 @@ class EvolutionRunner:
             archive_inspiration_ids=job.archive_insp_ids,
             top_k_inspiration_ids=job.top_k_insp_ids,
             code_diff=job.code_diff,
-            embedding=code_embedding,
+            embedding=[],
             correct=correct_val,
             combined_score=combined_score,
             public_metrics=public_metrics,
@@ -901,89 +713,15 @@ class EvolutionRunner:
             metadata={
                 "compute_time": rtime,
                 **(job.meta_patch_data or {}),
-                "embed_cost": e_cost,
-                "novelty_cost": n_cost,
                 "stdout_log": stdout_log,
                 "stderr_log": stderr_log,
             },
         )
         self.db.add(db_program, verbose=True)
 
-        # Add the evaluated program to meta memory tracking
-        self.meta_summarizer.add_evaluated_program(db_program)
-
-        # Check if we should update meta memory after adding this program
-        if self.meta_summarizer.should_update_meta(self.evo_config.meta_rec_interval):
-            logger.info(
-                f"Updating meta memory after processing "
-                f"{len(self.meta_summarizer.evaluated_since_last_meta)} programs..."
-            )
-            best_program = self.db.get_best_program()
-            updated_recs, meta_cost = self.meta_summarizer.update_meta_memory(
-                best_program
-            )
-            if updated_recs:
-                # Write meta output file using accumulated program count
-                self.meta_summarizer.write_meta_output(str(self.results_dir))
-                # Store meta cost for tracking
-                if meta_cost > 0:
-                    logger.info(
-                        f"Meta recommendation generation cost: ${meta_cost:.4f}"
-                    )
-                    # Add meta cost to this program's metadata (the one that triggered the update)
-                    if db_program.metadata is None:
-                        db_program.metadata = {}
-                    db_program.metadata["meta_cost"] = meta_cost
-                    # Update the program in the database with the new metadata
-                    import json
-
-                    metadata_json = json.dumps(db_program.metadata)
-                    self.db.cursor.execute(
-                        "UPDATE programs SET metadata = ? WHERE id = ?",
-                        (metadata_json, db_program.id),
-                    )
-                    self.db.conn.commit()
-
-        if self.llm_selection is not None:
-            if "model_name" not in db_program.metadata:
-                logger.warning(
-                    "No model_name found in program metadata, "
-                    "unable to update model selection algorithm."
-                )
-            else:
-                parent = (
-                    self.db.get(db_program.parent_id) if db_program.parent_id else None
-                )
-                baseline = parent.combined_score if parent else None
-                reward = db_program.combined_score if correct_val else None
-                model_name = db_program.metadata["model_name"]
-                result = self.llm_selection.update(
-                    arm=model_name,
-                    reward=reward,
-                    baseline=baseline,
-                )
-                if result and self.verbose:
-                    normalized_score, baseline = result
-
-                    def fmt(x):
-                        return f"{x:.4f}" if isinstance(x, (float, int)) else "None"
-
-                    logger.debug(
-                        f"==> UPDATED LLM SELECTION: model: "
-                        f"{model_name.split('/')[-1][-25:]}..., "
-                        f"score: {fmt(normalized_score)}, "
-                        f"raw score: {fmt(reward)}, baseline: {fmt(baseline)}"
-                    )
-                    self.llm_selection.print_summary()
-
         self.db.save()
         self._update_best_solution()
 
-        # Note: Meta summarization check is now done after completed generations
-        # are updated in the main loop to ensure correct timing
-
-        # Save meta memory state after each job completion
-        self._save_meta_memory()
 
     def _update_best_solution(self):
         """Checks and updates the best program."""
@@ -1023,7 +761,6 @@ class EvolutionRunner:
         archive_programs: List[Program],
         top_k_programs: List[Program],
         generation: int,
-        novelty_attempt: int = 1,
         resample_attempt: int = 1,
     ) -> tuple[Optional[str], dict, int]:
         """Run patch generation for a specific generation."""
@@ -1033,14 +770,11 @@ class EvolutionRunner:
                 f"Edit Cycle {generation} -> {generation + 1}, "
                 f"Max Patch Attempts: {max_patch_attempts}"
             )
-        # Get current meta recommendations
-        meta_recs, _, _ = self.meta_summarizer.get_current()
         # Construct edit / code change message
         patch_sys, patch_msg, patch_type = self.prompt_sampler.sample(
             parent=parent_program,
             archive_inspirations=archive_programs,
             top_k_inspirations=top_k_programs,
-            meta_recommendations=meta_recs,
         )
 
         if patch_type in ["full", "cross"]:
@@ -1179,7 +913,8 @@ class EvolutionRunner:
             "patch_name": patch_name,
             "patch_description": patch_description,
             "error_attempt": error_attempt,
-            "novelty_attempt": novelty_attempt,
+            "patch_description": patch_description,
+            "error_attempt": error_attempt,
             "resample_attempt": resample_attempt,
             "patch_attempt": patch_attempt + 1,
             **llm_kwargs,
@@ -1191,43 +926,8 @@ class EvolutionRunner:
         # Delete generation from meta_edit_data
         return code_diff, meta_edit_data, num_applied_attempt
 
-    def get_code_embedding(self, exec_fname: str) -> tuple[List[float], float]:
-        """Get the embedding of the code."""
-        # Read the evaluated code
-        try:
-            evaluated_code = Path(exec_fname).read_text(encoding="utf-8")
-        except Exception as e:
-            logger.warning(f"Could not read code for job {exec_fname}. Error: {e}")
-            evaluated_code = ""
-        if evaluated_code != "":
-            # Get the embedding of the initial program
-            try:
-                if self.embedding is not None:
-                    redacted_code = redact_immutable(evaluated_code, no_state=True)
-                    if self.verbose:
-                        logger.debug(
-                            "=> EMBED: Code length - "
-                            f"Original: {len(evaluated_code)} - "
-                            f"Redacted: {len(redacted_code)}"
-                        )
+        return code_diff, meta_edit_data, num_applied_attempt
 
-                    embedding_result, e_cost = self.embedding.get_embedding(
-                        redacted_code
-                    )
-                else:
-                    if self.verbose:
-                        logger.debug("=> EMBED: No embedding model configured.")
-                    embedding_result = []
-                    e_cost = 0.0
-                code_embedding = cast(List[float], embedding_result)
-            except Exception as e:
-                logger.warning(f"Could not embed code for job {exec_fname}. Error: {e}")
-                code_embedding = []
-                e_cost = 0.0
-        else:
-            code_embedding = []
-            e_cost = 0.0
-        return code_embedding, e_cost
 
     def _print_metadata_table(self, meta_data: dict, generation: int):
         """Display metadata in a formatted rich table."""
@@ -1237,21 +937,17 @@ class EvolutionRunner:
         # Add generation if present
         if generation is not None:
             title_parts.append(
-                f" - Gen {generation}/{self.evo_config.num_generations} - Novelty: {meta_data['novelty_attempt']}/{self.evo_config.max_novelty_attempts} - Resample: {meta_data['resample_attempt']}/{self.evo_config.max_patch_resamples} - Patch: {meta_data['patch_attempt']}/{self.evo_config.max_patch_attempts}"
+            title_parts.append(
+                f" - Gen {generation}/{self.evo_config.num_generations} - Resample: {meta_data['resample_attempt']}/{self.evo_config.max_patch_resamples} - Patch: {meta_data['patch_attempt']}/{self.evo_config.max_patch_attempts}"
             )
 
         # Add attempt information if present
         if all(
             key in meta_data
             for key in [
-                "novelty_attempt",
-                "resample_attempt",
-                "patch_attempt",
-                "generation",
             ]
         ):
             title_parts.append(
-                f" (Novelty: {meta_data['novelty_attempt']}, "
                 f"Resample: {meta_data['resample_attempt']}, "
                 f"Patch: {meta_data['patch_attempt']})"
             )
@@ -1306,7 +1002,10 @@ class EvolutionRunner:
                 "llm_result",
                 "diff_summary",
                 "generation",
-                "novelty_attempt",
+            [
+                "llm_result",
+                "diff_summary",
+                "generation",
                 "resample_attempt",
                 "patch_attempt",
             ]
@@ -1336,25 +1035,4 @@ class EvolutionRunner:
 
         self.console.print(table)
 
-    def _save_meta_memory(self) -> None:
-        """Save the meta memory state to disk."""
-        meta_memory_path = Path(self.results_dir) / "meta_memory.json"
-        self.meta_summarizer.save_meta_state(str(meta_memory_path))
-
-    def _restore_meta_memory(self) -> None:
-        """Restore the meta memory state from disk."""
-        meta_memory_path = Path(self.results_dir) / "meta_memory.json"
-
-        if self.verbose:
-            logger.info(f"Attempting to restore meta memory from: {meta_memory_path}")
-
-        success = self.meta_summarizer.load_meta_state(str(meta_memory_path))
-        if success:
-            logger.info("Successfully restored meta memory state")
-        else:
-            if meta_memory_path.exists():
-                logger.warning(
-                    f"Meta memory file exists but failed to load: {meta_memory_path}"
-                )
-            else:
-                logger.info("No previous meta memory state found - starting fresh")
+        self.console.print(table)

@@ -67,7 +67,6 @@ class PromptSampler:
         parent: Program,
         archive_inspirations: List[Program],
         top_k_inspirations: List[Program],
-        meta_recommendations: Optional[str] = None,
     ) -> Tuple[str, str, str]:
         if self.task_sys_msg is None:
             sys_msg = BASE_SYSTEM_MSG
@@ -164,18 +163,8 @@ class PromptSampler:
         else:
             raise ValueError(f"Invalid patch type: {patch_type}")
 
-        # Add meta-recommendations if provided
-        sum_rec_msg = ""
-        if meta_recommendations not in [None, "none"] and patch_type != "cross":
-            sum_rec_msg += "\n\n# Potential Recommendations"
-            sum_rec_msg += (
-                "\nThe following are potential recommendations for the "
-                "next program generations:\n\n"
-            )
-            sum_rec_msg += f"\n{meta_recommendations}"
-
         return (
-            sys_msg + sum_rec_msg,
+            sys_msg,
             eval_history_msg + "\n" + iter_msg,
             patch_type,
         )
