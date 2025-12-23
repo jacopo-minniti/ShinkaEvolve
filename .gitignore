@@ -178,3 +178,4 @@ main.sh
 logs/
 results/
 data/
+test.py
