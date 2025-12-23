@@ -134,6 +134,7 @@ class Program:
     # Program identification
     id: str
     code: str
+    genome: Optional[str] = None  # Stores the SecondOrderGenome YAML
     language: str = "python"
 
     # Evolution information
@@ -377,7 +378,8 @@ class ProgramDatabase:
                 children_count INTEGER NOT NULL DEFAULT 0,
                 metadata TEXT,      -- JSON serialized Dict[str, Any]
                 migration_history TEXT, -- JSON of migration events
-                island_idx INTEGER  -- Add island_idx to the schema
+                island_idx INTEGER,  -- Add island_idx to the schema
+                genome TEXT         -- SecondOrderGenome YAML
             )
             """
         )
@@ -444,6 +446,33 @@ class ProgramDatabase:
         except sqlite3.Error as e:
             logger.error(f"Error during text_feedback migration: {e}")
             # Don't raise - this is not critical for existing functionality
+
+        # Migration 2: Add genome column if it doesn't exist
+        try:
+            self.cursor.execute("PRAGMA table_info(programs)")
+            columns = [row[1] for row in self.cursor.fetchall()]
+
+            if "genome" not in columns:
+                logger.info("Adding genome column to programs table")
+                self.cursor.execute("ALTER TABLE programs ADD COLUMN genome TEXT")
+                self.conn.commit()
+                logger.info("Successfully added genome column")
+        except sqlite3.Error as e:
+            logger.error(f"Error during genome migration: {e}")
+
+        # Migration 3: Add island_plans table
+        try:
+             self.cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS island_plans (
+                    island_idx INTEGER PRIMARY KEY,
+                    plan_yaml TEXT NOT NULL
+                )
+                """
+            )
+             self.conn.commit()
+        except sqlite3.Error as e:
+             logger.error(f"Error creating island_plans table: {e}")
 
     @db_retry()
     def _load_metadata_from_db(self):
@@ -590,9 +619,9 @@ class ProgramDatabase:
                     combined_score, public_metrics, private_metrics,
                     text_feedback, complexity, embedding, embedding_pca_2d,
                     embedding_pca_3d, embedding_cluster_id, correct,
-                    children_count, metadata, island_idx, migration_history)
+                    children_count, metadata, island_idx, migration_history, genome)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                           ?, ?, ?, ?, ?, ?)
+                           ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     program.id,
@@ -618,6 +647,7 @@ class ProgramDatabase:
                     metadata_json,
                     program.island_idx,
                     migration_history_json,
+                    program.genome,
                 ),
             )
 
@@ -795,8 +825,12 @@ class ProgramDatabase:
                     f"{program_data.get('id')}. Defaulting to empty list."
                 )
                 program_data["migration_history"] = []
-        else:
             program_data["migration_history"] = []
+
+        # Handle genome
+        if "genome" not in program_data:
+             program_data["genome"] = None
+
 
         # Handle archive status
         program_data["in_archive"] = bool(program_data.get("in_archive", 0))

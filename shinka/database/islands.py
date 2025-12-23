@@ -517,6 +517,23 @@ class CombinedIslandManager:
             ElitistMigrationStrategy(cursor, conn, config)
         )
 
+    def set_island_plan(self, island_idx: int, plan_yaml: str) -> None:
+        """Set the FirstOrderBiasPlan for an island."""
+        self.cursor.execute(
+            "INSERT OR REPLACE INTO island_plans (island_idx, plan_yaml) VALUES (?, ?)",
+            (island_idx, plan_yaml)
+        )
+        self.conn.commit()
+
+    def get_island_plan(self, island_idx: int) -> Optional[str]:
+        """Get the FirstOrderBiasPlan YAML for an island."""
+        self.cursor.execute(
+            "SELECT plan_yaml FROM island_plans WHERE island_idx = ?",
+            (island_idx,)
+        )
+        row = self.cursor.fetchone()
+        return row["plan_yaml"] if row else None
+
     def assign_island(self, program: Any) -> None:
         """Assign an island to a program using the configured strategy."""
         self.assignment_strategy.assign_island(program)
@@ -647,9 +664,9 @@ class CombinedIslandManager:
                     combined_score, public_metrics, private_metrics,
                     text_feedback, complexity, embedding, embedding_pca_2d,
                     embedding_pca_3d, embedding_cluster_id, correct,
-                    children_count, metadata, island_idx, migration_history)
+                    children_count, metadata, island_idx, migration_history, genome)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                           ?, ?, ?, ?, ?, ?)
+                           ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     new_id,
@@ -675,6 +692,7 @@ class CombinedIslandManager:
                     metadata_json,
                     island_idx,
                     migration_history_json,
+                    program.genome,
                 ),
             )
             created_ids.append(new_id)

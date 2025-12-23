@@ -57,12 +57,9 @@ The evaluation script handles the training loop and data loading. You primarily 
 
 evo_config = EvolutionConfig(
     task_sys_msg=task_sys_msg,
-    patch_types=["diff", "full", "cross"],
-    patch_type_probs=[0.6, 0.3, 0.1],
     num_generations=100,
     max_parallel_jobs=1,
     max_patch_resamples=3,
-    max_patch_attempts=3,
     job_type="local",
     language="python",
     llm_models=["Qwen/Qwen3-30B-A3B-Thinking-2507"],
