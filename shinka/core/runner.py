@@ -1,3 +1,4 @@
+import json
 import shutil
 import uuid
 import time
@@ -272,6 +273,54 @@ class EvolutionRunner:
         # Save experiment configuration to a YAML file
         self._save_experiment_config(evo_config, job_config, db_config)
 
+    def _with_patch_retry_count(
+        self,
+        private_metrics: dict,
+        meta_patch_data: Optional[dict],
+        default_retry_count: Optional[int] = None,
+    ) -> dict:
+        retry_count = None
+        if meta_patch_data:
+            patch_attempt = meta_patch_data.get("patch_attempt")
+            if isinstance(patch_attempt, int):
+                retry_count = max(patch_attempt - 1, 0)
+        if retry_count is None:
+            retry_count = default_retry_count
+        if retry_count is None:
+            return private_metrics
+        merged = dict(private_metrics) if isinstance(private_metrics, dict) else {}
+        merged["patch_retry_count"] = retry_count
+        return merged
+
+    def _update_private_metrics_json(
+        self,
+        results_dir: str,
+        private_metrics: dict,
+    ) -> None:
+        metrics_path = Path(results_dir) / "metrics.json"
+        if not metrics_path.exists():
+            return
+        try:
+            metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
+            if not isinstance(metrics_data, dict):
+                return
+            merged_private = metrics_data.get("private", {})
+            if not isinstance(merged_private, dict):
+                merged_private = {}
+            if isinstance(private_metrics, dict):
+                merged_private.update(private_metrics)
+            metrics_data["private"] = merged_private
+            metrics_path.write_text(
+                json.dumps(metrics_data, indent=4),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to update private metrics in %s: %s",
+                metrics_path,
+                exc,
+            )
+
     def _save_experiment_config(
         self,
         evo_config: EvolutionConfig,
@@ -516,6 +565,12 @@ class EvolutionRunner:
         combined_score = metrics_val.get("combined_score", 0.0)
         public_metrics = metrics_val.get("public", {})
         private_metrics = metrics_val.get("private", {})
+        private_metrics = self._with_patch_retry_count(
+            private_metrics,
+            meta_patch_data=None,
+            default_retry_count=0,
+        )
+        self._update_private_metrics_json(results_dir, private_metrics)
         text_feedback = metrics_val.get("text_feedback", "")
 
         # Add the program to the database
@@ -820,6 +875,11 @@ class EvolutionRunner:
         combined_score = metrics_val.get("combined_score", 0.0)
         public_metrics = metrics_val.get("public", {})
         private_metrics = metrics_val.get("private", {})
+        private_metrics = self._with_patch_retry_count(
+            private_metrics,
+            job.meta_patch_data,
+        )
+        self._update_private_metrics_json(job.results_dir, private_metrics)
         text_feedback = metrics_val.get("text_feedback", "")
 
         # Add the program to the database
