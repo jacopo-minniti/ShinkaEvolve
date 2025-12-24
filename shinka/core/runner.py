@@ -212,7 +212,7 @@ class EvolutionRunner:
             logger.info(f"Creating Island {island_idx}...")
             # Plan
             fo_plan = self.fo_planner.plan(island_idx, task_desc, dataset_type)
-            self.db.islands.set_island_plan(island_idx, fo_plan.to_yaml())
+            self.db.island_manager.set_island_plan(island_idx, fo_plan.to_yaml())
             
             # Init Genome
             so_genome = self.so_initializer.initialize(fo_plan, task_desc)
