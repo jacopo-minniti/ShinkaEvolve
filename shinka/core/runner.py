@@ -63,7 +63,7 @@ class EvolutionConfig:
     results_dir: Optional[str] = None
     use_text_feedback: bool = False
     # SIBS specific
-    mutation_weights: Dict[str, float] = field(default_factory=lambda: {"Alpha": 0.85, "Omega": 0.05, "Phi": 0.15})
+    mutation_weights: Dict[str, float] = field(default_factory=lambda: {"Alpha": 0.8, "Omega": 0.05, "Phi": 0.15})
     max_repair_attempts: int = 2
 
 @dataclass
