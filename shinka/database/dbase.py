@@ -1786,42 +1786,40 @@ class ProgramDatabase:
         """
         Thread-safe version of embedding recomputation. Creates its own DB connection.
         """
-        return
+        # Update all programs in a single transaction
+        conn.execute("BEGIN TRANSACTION")
+        try:
+            for i, program_id in enumerate(program_ids):
+                embedding_pca_2d_json = json.dumps(reduced_2d[i].tolist())
+                embedding_pca_3d_json = json.dumps(reduced_3d[i].tolist())
+                cluster_id = int(cluster_ids[i])
 
-            # Update all programs in a single transaction
-            conn.execute("BEGIN TRANSACTION")
-            try:
-                for i, program_id in enumerate(program_ids):
-                    embedding_pca_2d_json = json.dumps(reduced_2d[i].tolist())
-                    embedding_pca_3d_json = json.dumps(reduced_3d[i].tolist())
-                    cluster_id = int(cluster_ids[i])
-
-                    cursor.execute(
-                        """
-                        UPDATE programs
-                        SET embedding_pca_2d = ?,
-                            embedding_pca_3d = ?,
-                            embedding_cluster_id = ?
-                        WHERE id = ?
-                        """,
-                        (
-                            embedding_pca_2d_json,
-                            embedding_pca_3d_json,
-                            cluster_id,
-                            program_id,
-                        ),
-                    )
-                conn.commit()
-                logger.info(
-                    "Successfully updated embedding features for %s programs.",
-                    len(program_ids),
+                cursor.execute(
+                    """
+                    UPDATE programs
+                    SET embedding_pca_2d = ?,
+                        embedding_pca_3d = ?,
+                        embedding_cluster_id = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        embedding_pca_2d_json,
+                        embedding_pca_3d_json,
+                        cluster_id,
+                        program_id,
+                    ),
                 )
-            except Exception as e:
-                conn.rollback()
-                logger.error(
-                    "Failed to update programs with new embedding features: %s", e
-                )
-                raise  # Re-raise exception
+            conn.commit()
+            logger.info(
+                "Successfully updated embedding features for %s programs.",
+                len(program_ids),
+            )
+        except Exception as e:
+            conn.rollback()
+            logger.error(
+                "Failed to update programs with new embedding features: %s", e
+            )
+            raise  # Re-raise exception
 
         except Exception as e:
             logger.error(f"Thread-safe embedding recomputation failed: {e}")

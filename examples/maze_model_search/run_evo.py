@@ -67,8 +67,7 @@ evo_config = EvolutionConfig(
         temperatures=[0.7],
         max_tokens=20000,
     ),
-    init_program_path="examples/maze_model_search/initial.py",
-    results_dir="results/maze_qwen3-30B-v2",
+    results_dir="results/maze_qwen3-30B-bias",
 )
 
 if __name__ == "__main__":
