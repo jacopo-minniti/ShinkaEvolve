@@ -241,6 +241,55 @@ Do not remove existing genome content.
 Do not include external commentary.
 """
 
+def _clean_yaml_content(content: str) -> str:
+    """
+    Clean the content to ensure it is valid YAML.
+    1. Remove <think> tags.
+    2. Replace non-breaking spaces and other common invisible characters.
+    3. Ensure ASCII compatible (optional, but safer for YAML scanners).
+    """
+    # Remove <think> blocks
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+    
+    # Replace non-breaking spaces
+    content = content.replace('\u00A0', ' ')
+    
+    # Normalize fancy quotes (optional but good for copy-paste issues)
+    content = content.replace('\u201c', '"').replace('\u201d', '"')
+    content = content.replace('\u2018', "'").replace('\u2019', "'")
+
+    return content.strip()
+
+def _extract_yaml_heuristic(content: str, known_keys: List[str]) -> str:
+    """
+    Heuristically extract YAML content by finding the first occurrence of a known key.
+    This handles cases where the LLM chats before outputting YAML without code blocks.
+    """
+    lines = content.split('\n')
+    start_idx = -1
+    
+    # Try to find the start of the YAML
+    for i, line in enumerate(lines):
+        line = line.strip()
+        # Check if line starts with a known key
+        for key in known_keys:
+            if line.startswith(f"{key}:") or line.startswith(f"- {key}:"):
+                start_idx = i
+                break
+        if start_idx != -1:
+            break
+            
+    if start_idx != -1:
+        # Check for potential end (e.g. if chat resumes after YAML)
+        # This is harder for YAML as it relies on indentation. 
+        # For now, we assume the rest of the text is the YAML or at least
+        # the YAML parser might be robust enough to ignore trailing chat if indent doesn't match?
+        # Actually trailing chat often causes errors.
+        # But cutting from start is better than nothing.
+        return "\n".join(lines[start_idx:])
+    
+    return content
+
 
 
 class FirstOrderPlanner:
@@ -251,8 +300,11 @@ class FirstOrderPlanner:
         user_msg = f"Task Description: {task_description}\nDataset Type: {dataset_type}\nIsland ID: {island_id}\n\nGenerate a FirstOrderBiasPlan in YAML format."
         response = self.llm.query(msg=user_msg, system_msg=FIRST_ORDER_PLANNER_SYS_PROMPT)
         if response and response.content:
+            logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
+            
             # Clean content first
-            content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+            content = _clean_yaml_content(response.content)
+            logger.debug(f"FirstOrderPlanner Cleaned Content:\n{content}")
             
             from shinka.llm.llm import extract_between
             # Use extract_between with fallback to code blocks for YAML
@@ -266,18 +318,26 @@ class FirstOrderPlanner:
                      data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
                 
                 if data != "none" and data is not None:
+                    logger.debug("Successfully parsed FirstOrderBiasPlan from code block.")
                     return FirstOrderBiasPlan.from_dict(data) 
                 
-                # If still nothing, try to parse the whole content if it looks like YAML (last resort)
-                # But dangerous if chatty.
-                # Let's try to just clean it up manually if extract failed but we have content
+                # If strict extraction fails, try heuristic cleanup
                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                return FirstOrderBiasPlan.from_yaml(clean_content)
+                # Specific keys for FirstOrderBiasPlan
+                known_keys = ["first_order_version", "island_id", "task_summary", "alpha_requirements"]
+                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
+                
+                logger.debug(f"Attempting heuristic parse on:\n{heuristic_content}")
+                return FirstOrderBiasPlan.from_yaml(heuristic_content)
             except Exception as e:
-                logger.warning(f"Failed to parse FirstOrderBiasPlan: {e}. Content: {content[:100]}...")
-                # Try raw
+                logger.warning(f"Failed to parse FirstOrderBiasPlan: {e}.")
+                logger.debug(f"Problematic Content (Cleaned):\n{content}")
+                # Try raw/heuristic
                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                return FirstOrderBiasPlan.from_yaml(clean_content)
+                known_keys = ["first_order_version", "island_id", "task_summary", "alpha_requirements"]
+                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
+                return FirstOrderBiasPlan.from_yaml(heuristic_content)
+
 
         raise ValueError("Failed to generate FirstOrderBiasPlan")
 
@@ -289,7 +349,10 @@ class SecondOrderInitializer:
         user_msg = f"Task Description: {task_description}\nFirst Order Plan:\n{first_order_plan.to_yaml()}\n\nGenerate an initial SecondOrderGenome in YAML format."
         response = self.llm.query(msg=user_msg, system_msg=SECOND_ORDER_INITIALIZER_SYS_PROMPT)
         if response and response.content:
-            content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+            logger.debug(f"SecondOrderInitializer Raw Response:\n{response.content}")
+            content = _clean_yaml_content(response.content)
+            logger.debug(f"SecondOrderInitializer Cleaned Content:\n{content}")
+            
             from shinka.llm.llm import extract_between
             try:
                 data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
@@ -297,14 +360,21 @@ class SecondOrderInitializer:
                      data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
                 
                 if data != "none" and data is not None:
+                    logger.debug("Successfully parsed SecondOrderGenome from code block.")
                     return SecondOrderGenome.from_dict(data)
 
                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                return SecondOrderGenome.from_yaml(clean_content)
+                known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
+                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
+                logger.debug(f"Attempting heuristic parse on:\n{heuristic_content}")
+                return SecondOrderGenome.from_yaml(heuristic_content)
             except Exception as e:
                 logger.warning(f"Failed to parse SecondOrderGenome: {e}")
+                logger.debug(f"Problematic Content (Cleaned):\n{content}")
                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                return SecondOrderGenome.from_yaml(clean_content)
+                known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
+                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
+                return SecondOrderGenome.from_yaml(heuristic_content)
         raise ValueError("Failed to generate SecondOrderGenome")
 
 class DesignMutator:
@@ -416,7 +486,10 @@ class ReflectionWriter:
         """
         response = self.llm.query(msg=user_msg, system_msg=REFLECTION_WRITER_SYS_PROMPT)
         if response and response.content:
-             content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+             logger.debug(f"ReflectionWriter Raw Response:\n{response.content}")
+             content = _clean_yaml_content(response.content)
+             logger.debug(f"ReflectionWriter Cleaned Content:\n{content}")
+
              from shinka.llm.llm import extract_between
              try:
                  data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
@@ -424,12 +497,19 @@ class ReflectionWriter:
                      data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
                  
                  if data != "none" and data is not None:
+                     logger.debug("Successfully parsed reflected genome from code block.")
                      return SecondOrderGenome.from_dict(data)
 
-                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                 return SecondOrderGenome.from_yaml(clean_content)
+                  clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                  known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
+                  heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
+                  logger.debug(f"Attempting heuristic parse on:\n{heuristic_content}")
+                  return SecondOrderGenome.from_yaml(heuristic_content)
              except Exception as e:
-                 logger.warning(f"Failed to parse reflected genome: {e}")
-                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                 return SecondOrderGenome.from_yaml(clean_content)
+                  logger.warning(f"Failed to parse reflected genome: {e}")
+                  logger.debug(f"Problematic Content (Cleaned):\n{content}")
+                  clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                  known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
+                  heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
+                  return SecondOrderGenome.from_yaml(heuristic_content)
         raise ValueError("Failed to reflect on genome")

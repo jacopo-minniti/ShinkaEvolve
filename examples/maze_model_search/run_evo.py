@@ -2,6 +2,14 @@ from shinka.core import EvolutionRunner, EvolutionConfig
 from shinka.database import DatabaseConfig
 from shinka.launch import LocalJobConfig
 import os
+import logging
+
+# Configure logging to DEBUG level
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True
+)
 
 # Configure the job execution environment
 # We point to our new evaluate.py
