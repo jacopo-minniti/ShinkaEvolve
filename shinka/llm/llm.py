@@ -225,6 +225,7 @@ class LLMClient:
         system_msg: str,
         msg_history: List[Dict] = [],
         llm_kwargs: Optional[Dict] = None,
+        output_model: Optional[BaseModel] = None,
     ) -> Optional[QueryResult]:
         """Execute a single query to the LLM.
 
@@ -260,7 +261,7 @@ class LLMClient:
                     msg=msg,
                     system_msg=system_msg,
                     msg_history=msg_history,
-                    output_model=self.output_model,
+                    output_model=output_model if output_model else self.output_model,
                     model_posteriors=model_posteriors,
                     **llm_kwargs,
                 )
@@ -781,6 +782,7 @@ class AsyncLLMClient:
         system_msg: str,
         msg_history: List[Dict] = [],
         llm_kwargs: Optional[Dict] = None,
+        output_model: Optional[BaseModel] = None,
     ) -> Optional[QueryResult]:
         """Execute a single query to the LLM asynchronously.
 
@@ -817,7 +819,7 @@ class AsyncLLMClient:
                     msg=msg,
                     system_msg=system_msg,
                     msg_history=msg_history,
-                    output_model=self.output_model,
+                    output_model=output_model if output_model else self.output_model,
                     model_posteriors=model_posteriors,
                     **llm_kwargs,
                 )
