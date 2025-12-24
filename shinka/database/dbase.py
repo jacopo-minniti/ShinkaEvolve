@@ -14,7 +14,7 @@ from .parents import CombinedParentSelector
 from .inspirations import CombinedContextSelector
 from .islands import CombinedIslandManager
 from .display import DatabaseDisplay
-from shinka.llm.embedding import EmbeddingClient
+
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +82,8 @@ class DatabaseConfig:
     # Beam search parent selection parameters
     num_beams: int = 5
 
-    # Embedding model name
-    embedding_model: str = "text-embedding-3-small"
+
+
 
 
 def db_retry(max_retries=5, initial_delay=0.1, backoff_factor=2):
@@ -255,19 +255,13 @@ class ProgramDatabase:
     def __init__(
         self,
         config: DatabaseConfig,
-        embedding_model: str = "text-embedding-3-small",
         read_only: bool = False,
     ):
         self.config = config
         self.conn: Optional[sqlite3.Connection] = None
         self.cursor: Optional[sqlite3.Cursor] = None
         self.read_only = read_only
-        # Only create embedding client if not in read-only mode
-        # (e.g., WebUI doesn't need it for visualization)
-        if not read_only:
-            self.embedding_client = EmbeddingClient(model_name=embedding_model)
-        else:
-            self.embedding_client = None
+        self.embedding_client = None
 
         self.last_iteration: int = 0
         self.best_program_id: Optional[str] = None
@@ -682,7 +676,7 @@ class ProgramDatabase:
         self._update_best_program(program)
 
         # Recompute embeddings and clusters for all programs
-        self._recompute_embeddings_and_clusters()
+        # self._recompute_embeddings_and_clusters()
 
         # Update generation tracking
         if program.generation > self.last_iteration:
@@ -1752,45 +1746,8 @@ class ProgramDatabase:
 
     @db_retry()
     def _recompute_embeddings_and_clusters(self, num_clusters: int = 4):
-        if self.read_only:
-            return
-        if not self.cursor or not self.conn:
-            raise ConnectionError("DB not connected.")
-
-        self.cursor.execute(
-            "SELECT id, embedding FROM programs "
-            "WHERE embedding IS NOT NULL AND embedding != '[]'"
-        )
-        rows = self.cursor.fetchall()
-
-        if len(rows) < num_clusters:
-            logger.info(
-                f"Not enough programs with embeddings ({len(rows)}) to "
-                f"perform clustering. Need at least {num_clusters}."
-            )
-            return
-
-        program_ids = [row["id"] for row in rows]
-        embeddings = [json.loads(row["embedding"]) for row in rows]
-
-        # Use EmbeddingClient for dim reduction and clustering
-        try:
-            logger.info(
-                "Recomputing PCA-reduced embedding features for %s programs.",
-                len(program_ids),
-            )
-            reduced_2d = self.embedding_client.get_dim_reduction(
-                embeddings, method="pca", dims=2
-            )
-            reduced_3d = self.embedding_client.get_dim_reduction(
-                embeddings, method="pca", dims=3
-            )
-            cluster_ids = self.embedding_client.get_embedding_clusters(
-                embeddings, num_clusters=num_clusters
-            )
-        except Exception as e:
-            logger.error(f"Failed to recompute embedding features: {e}")
-            return
+        # Disabled
+        return
 
         # Update all programs in a single transaction
         self.conn.execute("BEGIN TRANSACTION")
@@ -1829,62 +1786,7 @@ class ProgramDatabase:
         """
         Thread-safe version of embedding recomputation. Creates its own DB connection.
         """
-        if self.read_only:
-            return
-
-        conn = None
-        try:
-            # Create a new connection for this thread
-            conn = sqlite3.connect(
-                self.config.db_path, check_same_thread=False, timeout=60.0
-            )
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT id, embedding FROM programs "
-                "WHERE embedding IS NOT NULL AND embedding != '[]'"
-            )
-            rows = cursor.fetchall()
-
-            if len(rows) < num_clusters:
-                if len(rows) > 0:
-                    logger.info(
-                        f"Not enough programs with embeddings ({len(rows)}) to "
-                        f"perform clustering. Need at least {num_clusters}."
-                    )
-                return
-
-            program_ids = [row["id"] for row in rows]
-            embeddings = [json.loads(row["embedding"]) for row in rows]
-
-            # Use EmbeddingClient for dim reduction and clustering
-            try:
-                logger.info(
-                    "Recomputing PCA-reduced embedding features for %s programs.",
-                    len(program_ids),
-                )
-
-                logger.info("Computing 2D PCA reduction...")
-                reduced_2d = self.embedding_client.get_dim_reduction(
-                    embeddings, method="pca", dims=2
-                )
-                logger.info("2D PCA reduction completed")
-
-                logger.info("Computing 3D PCA reduction...")
-                reduced_3d = self.embedding_client.get_dim_reduction(
-                    embeddings, method="pca", dims=3
-                )
-                logger.info("3D PCA reduction completed")
-
-                logger.info(f"Computing GMM clustering with {num_clusters} clusters...")
-                cluster_ids = self.embedding_client.get_embedding_clusters(
-                    embeddings, num_clusters=num_clusters
-                )
-                logger.info("GMM clustering completed")
-            except Exception as e:
-                logger.error(f"Failed to recompute embedding features: {e}")
-                return
+        return
 
             # Update all programs in a single transaction
             conn.execute("BEGIN TRANSACTION")

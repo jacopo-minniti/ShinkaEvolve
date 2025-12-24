@@ -1,6 +1,9 @@
 from typing import Any, Tuple
 import os
-import anthropic
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
 import openai
 import instructor
 from pathlib import Path
@@ -31,12 +34,16 @@ def get_client_llm(model_name: str, structured_output: bool = False) -> Tuple[An
     """
     # print(f"Getting client for model {model_name}")
     if model_name in CLAUDE_MODELS.keys():
+        if anthropic is None:
+            raise ImportError("Anthropic package is not installed. Please install it to use Claude models.")
         client = anthropic.Anthropic()
         if structured_output:
             client = instructor.from_anthropic(
                 client, mode=instructor.mode.Mode.ANTHROPIC_JSON
             )
     elif model_name in BEDROCK_MODELS.keys():
+        if anthropic is None:
+             raise ImportError("Anthropic package is not installed.")
         model_name = model_name.split("/")[-1]
         client = anthropic.AnthropicBedrock(
             aws_access_key=os.getenv("AWS_ACCESS_KEY_ID"),
