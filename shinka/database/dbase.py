@@ -1942,8 +1942,3 @@ class ProgramDatabase:
         finally:
             if conn:
                 conn.close()
-
-    def _get_programs_for_island(self, island_idx: int) -> List[Program]:
-        """
-        Get all programs for a specific island.
-        """
