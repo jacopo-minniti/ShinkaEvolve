@@ -53,8 +53,8 @@ For each component, you must:
 - Avoid any reference to specific layers, losses, optimizers, or code
 
 Output format
-Output YAML only.
-The YAML must contain:
+Output JSON only.
+The JSON must contain:
 - A short task summary
 - One section per bias component (Alpha, Beta, Gamma, Delta)
 - Each section must include:
@@ -63,7 +63,7 @@ The YAML must contain:
   - rationale (why this bias matters for the task)
 
 Do not include second-order or implementation details.
-Do not include free-form commentary outside the YAML.
+Do not include free-form commentary outside the JSON.
 """
 
 
@@ -109,8 +109,8 @@ For each component, you must:
 - Avoid unnecessary hyperparameter tuning or exotic tricks
 
 Output format
-Output YAML only.
-The YAML must:
+Output JSON only.
+The JSON must:
 - Preserve traceability to the original first-order biases
 - Clearly separate Alpha, Omega, and Phi sections
 - Include short rationales for each design choice
@@ -235,18 +235,18 @@ For each affected bias:
 You may suggest future mutation directions, but only as reflections, not changes.
 
 Output format
-Output the updated SecondOrderGenome YAML only.
+Output the updated SecondOrderGenome JSON only.
 Add a dedicated reflection field to relevant components.
 Do not remove existing genome content.
 Do not include external commentary.
 """
 
-def _clean_yaml_content(content: str) -> str:
+def _clean_json_content(content: str) -> str:
     """
-    Clean the content to ensure it is valid YAML.
+    Clean the content to ensure it is valid JSON.
     1. Remove <think> tags.
     2. Replace non-breaking spaces and other common invisible characters.
-    3. Ensure ASCII compatible (optional, but safer for YAML scanners).
+    3. Ensure ASCII compatible.
     """
     # Remove <think> blocks
     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
@@ -297,47 +297,44 @@ class FirstOrderPlanner:
         self.llm = llm_client
 
     def plan(self, island_id: int, task_description: str, dataset_type: str) -> FirstOrderBiasPlan:
-        user_msg = f"Task Description: {task_description}\nDataset Type: {dataset_type}\nIsland ID: {island_id}\n\nGenerate a FirstOrderBiasPlan in YAML format."
-        response = self.llm.query(msg=user_msg, system_msg=FIRST_ORDER_PLANNER_SYS_PROMPT)
+        user_msg = f"Task Description: {task_description}\nDataset Type: {dataset_type}\nIsland ID: {island_id}\n\nGenerate a FirstOrderBiasPlan in JSON format."
+        # Pass output_model to enable structured output logic
+        response = self.llm.query(
+            msg=user_msg, 
+            system_msg=FIRST_ORDER_PLANNER_SYS_PROMPT,
+            output_model=FirstOrderBiasPlan
+        )
+        
         if response and response.content:
             logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
             
-            # Clean content first
-            content = _clean_yaml_content(response.content)
-            logger.debug(f"FirstOrderPlanner Cleaned Content:\n{content}")
-            
-            from shinka.llm.llm import extract_between
-            # Use extract_between with fallback to code blocks for YAML
-            # We first try explicit code blocks, then generic
-            # The prompt asks for YAML, so we look for ```yaml ... ``` first
+            # Use Pydantic's validation directly on the content string (it should be valid JSON)
             try:
-                # First try strict YAML block
-                data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
-                if data == "none" or data is None:
-                     # Fallback to just ```...``` if no lang specified
-                     data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
+                # Basic cleaning just in case (e.g. ```json blocks)
+                content = _clean_json_content(response.content) # Reusing cleaner function name, acts as generic cleaner
+                if "```json" in content:
+                    content = content.replace("```json", "").replace("```", "")
+                elif "```" in content:
+                    content = content.replace("```", "")
+                content = content.strip()
                 
-                if data != "none" and data is not None:
-                    logger.debug("Successfully parsed FirstOrderBiasPlan from code block.")
-                    return FirstOrderBiasPlan.from_dict(data) 
-                
-                # If strict extraction fails, try heuristic cleanup
-                clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                # Specific keys for FirstOrderBiasPlan
-                known_keys = ["first_order_version", "island_id", "task_summary", "alpha_requirements"]
-                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
-                
-                logger.debug(f"Attempting heuristic parse on:\n{heuristic_content}")
-                return FirstOrderBiasPlan.from_yaml(heuristic_content)
+                return FirstOrderBiasPlan.model_validate_json(content)
             except Exception as e:
-                logger.warning(f"Failed to parse FirstOrderBiasPlan: {e}.")
-                logger.debug(f"Problematic Content (Cleaned):\n{content}")
-                # Try raw/heuristic
-                clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                known_keys = ["first_order_version", "island_id", "task_summary", "alpha_requirements"]
-                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
-                return FirstOrderBiasPlan.from_yaml(heuristic_content)
-
+                logger.warning(f"Failed to parse FirstOrderBiasPlan JSON: {e}")
+                logger.debug(f"Problematic JSON Content:\n{response.content}")
+                # Fallback: try standard json load then validate?
+                # model_validate_json does that.
+                
+                # Extreme fallback: try to find the start/end of JSON object
+                try:
+                    import json
+                    start = content.find("{")
+                    end = content.rfind("}") + 1
+                    if start != -1 and end != -1:
+                        json_str = content[start:end]
+                        return FirstOrderBiasPlan.model_validate_json(json_str)
+                except Exception as inner_e:
+                     logger.error(f"Extreme fallback failed: {inner_e}")
 
         raise ValueError("Failed to generate FirstOrderBiasPlan")
 
@@ -346,35 +343,38 @@ class SecondOrderInitializer:
         self.llm = llm_client
 
     def initialize(self, first_order_plan: FirstOrderBiasPlan, task_description: str) -> SecondOrderGenome:
-        user_msg = f"Task Description: {task_description}\nFirst Order Plan:\n{first_order_plan.to_yaml()}\n\nGenerate an initial SecondOrderGenome in YAML format."
-        response = self.llm.query(msg=user_msg, system_msg=SECOND_ORDER_INITIALIZER_SYS_PROMPT)
+        # Note: first_order_plan.to_yaml() now essentially returns JSON via our mixin, or we can use model_dump_json explicitly
+        user_msg = f"Task Description: {task_description}\nFirst Order Plan:\n{first_order_plan.model_dump_json(indent=2)}\n\nGenerate an initial SecondOrderGenome in JSON format."
+        
+        response = self.llm.query(
+            msg=user_msg, 
+            system_msg=SECOND_ORDER_INITIALIZER_SYS_PROMPT,
+            output_model=SecondOrderGenome
+        )
+        
         if response and response.content:
             logger.debug(f"SecondOrderInitializer Raw Response:\n{response.content}")
-            content = _clean_yaml_content(response.content)
-            logger.debug(f"SecondOrderInitializer Cleaned Content:\n{content}")
-            
-            from shinka.llm.llm import extract_between
             try:
-                data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
-                if data == "none" or data is None:
-                     data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
+                content = _clean_json_content(response.content)
+                if "```json" in content:
+                    content = content.replace("```json", "").replace("```", "")
+                elif "```" in content:
+                    content = content.replace("```", "")
+                content = content.strip()
                 
-                if data != "none" and data is not None:
-                    logger.debug("Successfully parsed SecondOrderGenome from code block.")
-                    return SecondOrderGenome.from_dict(data)
-
-                clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
-                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
-                logger.debug(f"Attempting heuristic parse on:\n{heuristic_content}")
-                return SecondOrderGenome.from_yaml(heuristic_content)
+                return SecondOrderGenome.model_validate_json(content)
             except Exception as e:
-                logger.warning(f"Failed to parse SecondOrderGenome: {e}")
-                logger.debug(f"Problematic Content (Cleaned):\n{content}")
-                clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
-                heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
-                return SecondOrderGenome.from_yaml(heuristic_content)
+                logger.warning(f"Failed to parse SecondOrderGenome JSON: {e}")
+                logger.debug(f"Problematic JSON Content:\n{response.content}")
+                try:
+                    start = content.find("{")
+                    end = content.rfind("}") + 1
+                    if start != -1 and end != -1:
+                        json_str = content[start:end]
+                        return SecondOrderGenome.model_validate_json(json_str)
+                except Exception as inner_e:
+                     logger.error(f"Extreme fallback failed: {inner_e}")
+                     
         raise ValueError("Failed to generate SecondOrderGenome")
 
 class DesignMutator:
@@ -384,11 +384,12 @@ class DesignMutator:
     def mutate(self, parent_genome: SecondOrderGenome, component_to_mutate: str, 
                inspirations: List[SecondOrderGenome]) -> SecondOrderGenome:
         
-        insp_str = "\n".join([f"Inspiration Genome:\n{g.to_yaml()}" for g in inspirations])
+        # Use JSON for consistency with other agents, preserving logic
+        insp_str = "\n".join([f"Inspiration Genome:\n{g.model_dump_json(indent=2)}" for g in inspirations])
         
         user_msg = f"""
         Parent Genome:
-        {parent_genome.to_yaml()}
+        {parent_genome.model_dump_json(indent=2)}
         
         Component to Mutate: {component_to_mutate}
         
@@ -399,10 +400,13 @@ class DesignMutator:
         """
         response = self.llm.query(msg=user_msg, system_msg=DESIGN_MUTATOR_SYS_PROMPT)
         if response and response.content:
-             # Apply the diff to the parent yaml string
-             # Simplistic patch application for now
-             patched_yaml = self._apply_diff(parent_genome.to_yaml(), response.content)
-             return SecondOrderGenome.from_yaml(patched_yaml)
+             # Apply the diff to the parent JSON string
+             # The existing diff logic works on text, so it handles JSON strings fine
+             patched_json = self._apply_diff(parent_genome.model_dump_json(indent=2), response.content)
+             
+             # Clean up potential artifacts if diff wasn't perfect, though JSON is fragile to diffs.
+             # However, Search/Replace blocks are exact text matches, so if the LLM copies lines correctly, it works.
+             return SecondOrderGenome.model_validate_json(patched_json)
         raise ValueError("Failed to mutate genome")
 
     def _apply_diff(self, original_text: str, diff_text: str) -> str:
@@ -428,7 +432,7 @@ class ImplementationAgent:
         
         user_msg = f"""
         Target Genome Specification:
-        {genome.to_yaml()}
+        {genome.model_dump_json(indent=2)}
         
         Current Code:
         ```python
@@ -477,39 +481,39 @@ class ReflectionWriter:
     def reflect(self, genome: SecondOrderGenome, metrics: Dict[str, float]) -> SecondOrderGenome:
         user_msg = f"""
         Genome:
-        {genome.to_yaml()}
+        {genome.model_dump_json(indent=2)}
         
         Evaluation Metrics:
         {metrics}
         
         Update the 'reflection' field for biases.
         """
-        response = self.llm.query(msg=user_msg, system_msg=REFLECTION_WRITER_SYS_PROMPT)
+        response = self.llm.query(
+            msg=user_msg, 
+            system_msg=REFLECTION_WRITER_SYS_PROMPT,
+            output_model=SecondOrderGenome
+        )
+        
         if response and response.content:
              logger.debug(f"ReflectionWriter Raw Response:\n{response.content}")
-             content = _clean_yaml_content(response.content)
-             logger.debug(f"ReflectionWriter Cleaned Content:\n{content}")
-
-             from shinka.llm.llm import extract_between
              try:
-                 data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
-                 if data == "none" or data is None:
-                     data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
+                 content = _clean_json_content(response.content)
+                 if "```json" in content:
+                     content = content.replace("```json", "").replace("```", "")
+                 elif "```" in content:
+                     content = content.replace("```", "")
+                 content = content.strip()
                  
-                 if data != "none" and data is not None:
-                     logger.debug("Successfully parsed reflected genome from code block.")
-                     return SecondOrderGenome.from_dict(data)
-
-                  clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                  known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
-                  heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
-                  logger.debug(f"Attempting heuristic parse on:\n{heuristic_content}")
-                  return SecondOrderGenome.from_yaml(heuristic_content)
+                 return SecondOrderGenome.model_validate_json(content)
              except Exception as e:
-                  logger.warning(f"Failed to parse reflected genome: {e}")
-                  logger.debug(f"Problematic Content (Cleaned):\n{content}")
-                  clean_content = content.replace("```yaml", "").replace("```", "").strip()
-                  known_keys = ["genome_version", "genome_id", "learner", "high_level_description"]
-                  heuristic_content = _extract_yaml_heuristic(clean_content, known_keys)
-                  return SecondOrderGenome.from_yaml(heuristic_content)
+                 logger.warning(f"Failed to parse reflected genome JSON: {e}")
+                 try:
+                    start = content.find("{")
+                    end = content.rfind("}") + 1
+                    if start != -1 and end != -1:
+                        json_str = content[start:end]
+                        return SecondOrderGenome.model_validate_json(json_str)
+                 except Exception as inner_e:
+                        logger.error(f"Extreme fallback failed: {inner_e}")
+                        
         raise ValueError("Failed to reflect on genome")

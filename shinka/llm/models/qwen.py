@@ -39,27 +39,37 @@ def query_qwen(
 ) -> QueryResult:
     """Query Qwen model."""
     new_msg_history = msg_history + [{"role": "user", "content": msg}]
-    if output_model is None:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_msg},
-                *new_msg_history,
-            ],
-            **kwargs,
-        )
-        try:
-            text = response.choices[0].message.content
-        except Exception:
-            # Fallback or specific handling if needed
-            text = ""
-        new_msg_history.append({"role": "assistant", "content": text})
-    else:
-        # Assuming Qwen support for structured output via instructor/patching if client is capable,
-        # otherwise raise as Gemini did. For now, sticking to basics or what the user asked (similar to Gemini).
-        # Gemini implementation raised ValueError. I will do same unless specified otherwise,
-        # but user said "super similar to gemini.py".
-        raise ValueError("Qwen does not support structured output yet.")
+    args_dict = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_msg},
+            *new_msg_history,
+        ],
+        **kwargs,
+    }
+
+    if output_model:
+        # Use native vLLM structured outputs via OpenAI API compatible extra_body
+        json_schema = output_model.model_json_schema()
+        # Ensure title is set correctly as some parsers are picky
+        if "title" not in json_schema:
+            json_schema["title"] = output_model.__name__
+
+        args_dict["extra_body"] = {
+            "structured_outputs": {
+                "json": json_schema
+            }
+        }
+        # Force temperature to something reasonable for constrained generation (optional)
+        # but respecting kwargs if set.
+    
+    response = client.chat.completions.create(**args_dict)
+    
+    try:
+        text = response.choices[0].message.content
+    except Exception:
+        text = ""
+    new_msg_history.append({"role": "assistant", "content": text})
 
     # Modified parsing for <think> tag instead of <thought>
     thought_match = re.search(

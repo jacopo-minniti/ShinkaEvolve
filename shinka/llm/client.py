@@ -74,11 +74,9 @@ def get_client_llm(model_name: str, structured_output: bool = False) -> Tuple[An
             base_url="http://localhost:8001/v1"
         )
         if structured_output:
-             # Assuming standard OpenAI JSON mode or compatible
-             client = instructor.from_openai(
-                client,
-                mode=instructor.Mode.JSON,
-            )
+             # We handle structured output manually in query_qwen via extra_body
+             # So we do NOT wrap with instructor here.
+             pass
     elif model_name in DEEPSEEK_MODELS.keys():
         client = openai.OpenAI(
             api_key=os.environ["DEEPSEEK_API_KEY"],
