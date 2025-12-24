@@ -1325,6 +1325,7 @@ def extract_between(
     end: str = "</json>",
     return_dict: bool = True,
     fallback: bool = False,
+    is_yaml: bool = False,
 ) -> Optional[Union[str, dict]]:
     """Extract text from between start and end tags.
 
@@ -1338,7 +1339,11 @@ def extract_between(
     if match:
         matched_str = match.group(1).strip()
         if return_dict:
-            return json.loads(matched_str)
+            if is_yaml:
+                import yaml
+                return yaml.safe_load(matched_str)
+            else:
+                return json.loads(matched_str)
         else:
             return matched_str
 
@@ -1348,7 +1353,11 @@ def extract_between(
         if match:
             matched_str = match.group(1).strip()
             if return_dict:
-                return json.loads(matched_str)
+                if is_yaml:
+                    import yaml
+                    return yaml.safe_load(matched_str)
+                else:
+                    return json.loads(matched_str)
             else:
                 return matched_str
     return "none"

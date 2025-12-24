@@ -29,6 +29,22 @@ class FirstOrderBiasPlan:
             phi_requirements=[BiasRequirement(**item) for item in data.get("phi_requirements", [])]
         )
     
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "FirstOrderBiasPlan":
+        return cls(
+            first_order_version=data.get("first_order_version", 0.1),
+            island_id=data.get("island_id", 0),
+            task_summary=data.get("task_summary", ""),
+            alpha_requirements=[BiasRequirement(**item) for item in data.get("alpha_requirements", [])],
+            omega_requirements=[BiasRequirement(**item) for item in data.get("omega_requirements", [])],
+            phi_requirements=[BiasRequirement(**item) for item in data.get("phi_requirements", [])]
+        )
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "FirstOrderBiasPlan":
+        data = yaml.safe_load(yaml_str)
+        return cls.from_dict(data)
+    
     def to_yaml(self) -> str:
         data = {
             "first_order_version": self.first_order_version,
@@ -79,9 +95,7 @@ class SecondOrderGenome:
     learner: LearnerSpec
 
     @classmethod
-    def from_yaml(cls, yaml_str: str) -> "SecondOrderGenome":
-        data = yaml.safe_load(yaml_str)
-        
+    def from_dict(cls, data: Dict[str, Any]) -> "SecondOrderGenome":
         def parse_biases(biases_data):
             return [
                 BiasEntry(
@@ -117,6 +131,11 @@ class SecondOrderGenome:
             fitness=data.get("fitness"),
             learner=learner
         )
+
+    @classmethod
+    def from_yaml(cls, yaml_str: str) -> "SecondOrderGenome":
+        data = yaml.safe_load(yaml_str)
+        return cls.from_dict(data)
 
     def to_yaml(self) -> str:
         def dict_biases(biases):

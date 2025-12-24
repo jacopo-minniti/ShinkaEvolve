@@ -251,9 +251,34 @@ class FirstOrderPlanner:
         user_msg = f"Task Description: {task_description}\nDataset Type: {dataset_type}\nIsland ID: {island_id}\n\nGenerate a FirstOrderBiasPlan in YAML format."
         response = self.llm.query(msg=user_msg, system_msg=FIRST_ORDER_PLANNER_SYS_PROMPT)
         if response and response.content:
-             # Basic cleanup to extract YAML if wrapped in markdown
-            content = response.content.replace("```yaml", "").replace("```", "").strip()
-            return FirstOrderBiasPlan.from_yaml(content)
+            # Clean content first
+            content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+            
+            from shinka.llm.llm import extract_between
+            # Use extract_between with fallback to code blocks for YAML
+            # We first try explicit code blocks, then generic
+            # The prompt asks for YAML, so we look for ```yaml ... ``` first
+            try:
+                # First try strict YAML block
+                data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
+                if data == "none" or data is None:
+                     # Fallback to just ```...``` if no lang specified
+                     data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
+                
+                if data != "none" and data is not None:
+                    return FirstOrderBiasPlan.from_dict(data) 
+                
+                # If still nothing, try to parse the whole content if it looks like YAML (last resort)
+                # But dangerous if chatty.
+                # Let's try to just clean it up manually if extract failed but we have content
+                clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                return FirstOrderBiasPlan.from_yaml(clean_content)
+            except Exception as e:
+                logger.warning(f"Failed to parse FirstOrderBiasPlan: {e}. Content: {content[:100]}...")
+                # Try raw
+                clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                return FirstOrderBiasPlan.from_yaml(clean_content)
+
         raise ValueError("Failed to generate FirstOrderBiasPlan")
 
 class SecondOrderInitializer:
@@ -264,8 +289,22 @@ class SecondOrderInitializer:
         user_msg = f"Task Description: {task_description}\nFirst Order Plan:\n{first_order_plan.to_yaml()}\n\nGenerate an initial SecondOrderGenome in YAML format."
         response = self.llm.query(msg=user_msg, system_msg=SECOND_ORDER_INITIALIZER_SYS_PROMPT)
         if response and response.content:
-            content = response.content.replace("```yaml", "").replace("```", "").strip()
-            return SecondOrderGenome.from_yaml(content)
+            content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+            from shinka.llm.llm import extract_between
+            try:
+                data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
+                if data == "none" or data is None:
+                     data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
+                
+                if data != "none" and data is not None:
+                    return SecondOrderGenome.from_dict(data)
+
+                clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                return SecondOrderGenome.from_yaml(clean_content)
+            except Exception as e:
+                logger.warning(f"Failed to parse SecondOrderGenome: {e}")
+                clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                return SecondOrderGenome.from_yaml(clean_content)
         raise ValueError("Failed to generate SecondOrderGenome")
 
 class DesignMutator:
@@ -377,6 +416,20 @@ class ReflectionWriter:
         """
         response = self.llm.query(msg=user_msg, system_msg=REFLECTION_WRITER_SYS_PROMPT)
         if response and response.content:
-             content = response.content.replace("```yaml", "").replace("```", "").strip()
-             return SecondOrderGenome.from_yaml(content)
+             content = re.sub(r"<think>.*?</think>", "", response.content, flags=re.DOTALL).strip()
+             from shinka.llm.llm import extract_between
+             try:
+                 data = extract_between(content, start="```yaml", end="```", return_dict=True, is_yaml=True)
+                 if data == "none" or data is None:
+                     data = extract_between(content, start="```", end="```", return_dict=True, is_yaml=True)
+                 
+                 if data != "none" and data is not None:
+                     return SecondOrderGenome.from_dict(data)
+
+                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                 return SecondOrderGenome.from_yaml(clean_content)
+             except Exception as e:
+                 logger.warning(f"Failed to parse reflected genome: {e}")
+                 clean_content = content.replace("```yaml", "").replace("```", "").strip()
+                 return SecondOrderGenome.from_yaml(clean_content)
         raise ValueError("Failed to reflect on genome")
