@@ -239,14 +239,20 @@ class LLMClient:
         Returns:
             QueryResult: The result of the query.
         """
+        default_kwargs = sample_model_kwargs(
+            model_names=self.model_names,
+            temperatures=self.temperatures,
+            max_tokens=self.max_tokens,
+            reasoning_efforts=self.reasoning_efforts,
+            model_sample_probs=self.model_sample_probs,
+        )
+
         if llm_kwargs is None:
-            llm_kwargs = sample_model_kwargs(
-                model_names=self.model_names,
-                temperatures=self.temperatures,
-                max_tokens=self.max_tokens,
-                reasoning_efforts=self.reasoning_efforts,
-                model_sample_probs=self.model_sample_probs,
-            )
+            llm_kwargs = default_kwargs
+        else:
+            default_kwargs.update(llm_kwargs)
+            llm_kwargs = default_kwargs
+
         if self.verbose:
             logger.info(f"==> QUERYING: {list(llm_kwargs.values())}")
 
