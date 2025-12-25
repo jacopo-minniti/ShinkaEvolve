@@ -75,7 +75,7 @@ class EvolutionConfig:
     max_repair_attempts: int = 2
     # Constraints
     max_params: int = 100_000
-    max_train_steps: int = 2000
+    train_steps: int = 2000
 
 @dataclass
 class RunningJob:
@@ -147,8 +147,8 @@ class EvolutionRunner:
         # Inject constraints into JobConfig for evaluate.py
         if self.evo_config.max_params:
             self.job_config.extra_cmd_args["max_params"] = self.evo_config.max_params
-        if self.evo_config.max_train_steps:
-             self.job_config.extra_cmd_args["max_train_steps"] = self.evo_config.max_train_steps
+        if self.evo_config.train_steps:
+             self.job_config.extra_cmd_args["train_steps"] = self.evo_config.train_steps
 
         # Job counter per generation
         self.generation_job_counters = {} # gen -> int
@@ -246,7 +246,7 @@ class EvolutionRunner:
         
         task_desc = self.evo_config.task_sys_msg or "Solve the task."
         # Append constraints to task desc
-        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.max_train_steps}"
+        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.train_steps}"
         
         dataset_type = "default"
 
@@ -274,7 +274,7 @@ class EvolutionRunner:
         if num_islands < 1: num_islands = 1
         
         task_desc = self.evo_config.task_sys_msg or "Solve the task."
-        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.max_train_steps}"
+        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.train_steps}"
 
         # In Gen 0, we might want multiple individuals per island if population size > num_islands
         # For now, let's assume 1 per island as per original code logic, or maybe more?
