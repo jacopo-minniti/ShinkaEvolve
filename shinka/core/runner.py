@@ -34,6 +34,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class Model(nn.Module):
+    # REGION_BODY_START
     def __init__(self):
         super().__init__()
         # TODO: Initialize components
@@ -41,13 +42,16 @@ class Model(nn.Module):
     def forward(self, x):
         # TODO: Implement forward pass
         pass
+    # REGION_BODY_END
 
+    # REGION_OBJECTIVE_START
     def compute_loss(self, batch, outputs):
         # TODO: Implement loss computation
         return torch.tensor(0.0, requires_grad=True)
 
     def compute_metrics(self, batch, outputs):
         return {"loss": 0.0, "test_accuracy": 0.0}
+    # REGION_OBJECTIVE_END
 """
 
 @dataclass
@@ -288,7 +292,16 @@ class EvolutionRunner:
                 # 3. Implement (Code Diff)
                 # We diff against the Parent's code!
                 parent_code = parent_prog.code
-                code = self.implementation_agent.implement(new_genome, parent_code=parent_code)
+                
+                # If mutation, we focus on that component. If crossover, we treat it as "All" or similar?
+                # Actually for crossover we swapped a component, so we really want to implement checks for that component?
+                # But since the genome changed structurally at a high level, "implement" might need to see what changed.
+                # Simplest is: if mutation, pass comp. If crossover, pass "All" (or the swapped comp if we trust the agent).
+                # The user requested enforcing strict division.
+                # For mutation, we know 'comp' changed.
+                target_comp = comp if "mutation" in patch_type else "All"
+                
+                code = self.implementation_agent.implement(new_genome, parent_code=parent_code, component=target_comp)
                 
                 # 4. Submit
                 exec_fname = f"{dir_path}/main_{uuid.uuid4().hex[:6]}.py"

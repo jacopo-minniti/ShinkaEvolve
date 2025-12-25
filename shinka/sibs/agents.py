@@ -170,14 +170,21 @@ You are the Implementation Agent.
 Role
 You translate a SecondOrderGenome into concrete PyTorch code changes. Your responsibility is to ensure the implementation faithfully reflects the genome specification.
 
-Conceptual scope
-You operate strictly at the code level:
-- Modify model architecture
-- Adjust forward passes
-- Implement losses or auxiliary objectives
-- Update data flow as required
+Target Component: {component}
+You must ONLY modify the code relevant to this component.
 
-You must not reinterpret the genome. If something is unclear, implement the most literal and minimal interpretation consistent with the specification.
+Conceptual scope
+- If Component is ALPHA (Architecture):
+    - Modify `__init__` to define layers/modules.
+    - Modify `forward` to change the main data flow through these layers.
+    - Do NOT touch `compute_loss` or `compute_metrics`.
+- If Component is OMEGA (Objective/Optimization):
+    - Modify `compute_loss` to implement the loss function.
+    - Modify `compute_metrics` to track relevant metrics.
+    - Do NOT touch `__init__` or `forward` (unless adding simple auxiliary heads strictly needed for the loss).
+- If Component is PHI (Information Flow):
+    - Modify `forward` to change how data is processed/shaped (e.g. normalization, reshape).
+    - Modify `__init__` only for normalization/embedding layers.
 
 Inputs
 You will receive:
@@ -186,25 +193,25 @@ You will receive:
 - Optionally, error logs or failing behaviors from previous runs
 
 Rules
-- All edits must be done using SEARCH/REPLACE blocks
-- The SEARCH block must match the original code exactly
-- The REPLACE block must contain valid, runnable PyTorch code
-- Preserve style and indentation consistency
-- If previous errors are provided, prioritize fixing them
+- All edits must be done using valid XML-style SEARCH/REPLACE blocks.
+- The SEARCH block must match the original code exactly, including indentation and whitespace.
+- The REPLACE block must contain valid, runnable PyTorch code.
+- Preserve style and indentation consistency.
+- If previous errors are provided, prioritize fixing them.
+- STRICTLY adhere to the component boundaries defined above.
 
 Edit format
-Use the following structure exactly:
+Use the following structure exactly (XML tags):
 
 <DIFF>
 <<<<<<< SEARCH
-# Original code to find and replace (must match exactly including indentation)
+# Original code to find (must match exactly)
 =======
 # New replacement code
 >>>>>>> REPLACE
 </DIFF>
 
 Do not include commentary outside the DIFF blocks.
-Do not output partial code fragments.
 """
 
 
@@ -449,53 +456,138 @@ class DesignMutator:
         return patched_text
 
 
+IMPLEMENTATION_AGENT_SYS_PROMPT = """
+You are the Implementation Agent.
+
+Role
+You translate a SecondOrderGenome into concrete PyTorch code changes. Your responsibility is to ensure the implementation faithfully reflects the genome specification.
+
+Target Component: {component}
+You have been given a SPECIFIC REGION of the code to modify.
+You must ONLY modify the code provided in the context.
+
+Conceptual scope
+- If Component is ALPHA (Architecture) or PHI (Info Flow):
+    - You are seeing the BODY region (__init__, forward).
+    - Modify structure and data flow.
+- If Component is OMEGA (Objective/Optimization):
+    - You are seeing the OBJECTIVE region (compute_loss, compute_metrics).
+    - Modify loss logic and metrics.
+
+Inputs
+You will receive:
+- A specific Code Region (subset of the full file)
+- A SecondOrderGenome describing the desired design
+- Optionally, error logs
+
+Rules
+- All edits must be done using valid XML-style SEARCH/REPLACE blocks.
+- The SEARCH block must match the provided code region exactly.
+- The REPLACE block must contain valid, runnable PyTorch code.
+- **IMPORTANT**: Do NOT remove the region markers (# REGION_...) if they appear.
+- Preserve style and indentation consistency.
+- If previous errors are provided, prioritize fixing them.
+
+Edit format
+Use the following structure exactly (XML tags):
+
+<DIFF>
+<<<<<<< SEARCH
+# Original code to find (must match exactly)
+=======
+# New replacement code
+>>>>>>> REPLACE
+</DIFF>
+"""
+
+
 class ImplementationAgent:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    def implement(self, genome: SecondOrderGenome, parent_code: str, previous_errors: Optional[str] = None) -> str:
+    def implement(self, genome: SecondOrderGenome, parent_code: str, previous_errors: Optional[str] = None, component: str = "All") -> str:
         
+        # Determine strict region based on component
+        region_tag_start = None
+        region_tag_end = None
+        
+        if component in ["Alpha", "Phi"]:
+            region_tag_start = "# REGION_BODY_START"
+            region_tag_end = "# REGION_BODY_END"
+        elif component == "Omega":
+            region_tag_start = "# REGION_OBJECTIVE_START"
+            region_tag_end = "# REGION_OBJECTIVE_END"
+            
+        code_context = parent_code
+        pre_context = ""
+        post_context = ""
+        
+        # Try to extract region
+        if region_tag_start and region_tag_end:
+            pattern = re.compile(f"({re.escape(region_tag_start)}.*?{re.escape(region_tag_end)})", re.DOTALL)
+            match = pattern.search(parent_code)
+            if match:
+                code_context = match.group(1)
+                start_idx = match.start(1)
+                end_idx = match.end(1)
+                pre_context = parent_code[:start_idx]
+                post_context = parent_code[end_idx:]
+                logger.info(f"ImplementationAgent: Restricted editing to region {component} ({len(code_context)} chars)")
+            else:
+                logger.warning(f"ImplementationAgent: Region tags {region_tag_start}... not found. fallback to full code.")
+
         user_msg = f"""
         Target Genome Specification:
         {genome.model_dump_json(indent=2)}
         
-        Current Code:
+        Code Region to Modify:
         ```python
-        {parent_code}
+        {code_context}
         ```
         """
         if previous_errors:
             user_msg += f"\nPrevious Implementation Errors:\n{previous_errors}"
         else:
-            user_msg += "\nModify the code to match the new genome."
+            user_msg += "\nModify the code region to match the new genome."
 
-        response = self.llm.query(msg=user_msg, system_msg=IMPLEMENTATION_AGENT_SYS_PROMPT)
+        formatted_sys_msg = IMPLEMENTATION_AGENT_SYS_PROMPT.format(component=component)
+        response = self.llm.query(msg=user_msg, system_msg=formatted_sys_msg)
+        
         if response and response.content:
-            # Apply diff
-            return self._apply_diff(parent_code, response.content)
+            # Apply diff to the CONTEXT (partial code)
+            patched_context = self._apply_diff(code_context, response.content)
+            
+            # Reassemble
+            full_code = pre_context + patched_context + post_context
+            return full_code
             
         raise ValueError("Failed to generate implementation code")
     
     def _apply_diff(self, original_text: str, diff_text: str) -> str:
-        # Reusing similar logic or importing from shinka if strictly required
-        # For now, implementing robust local patcher
-        pattern = re.compile(r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE", re.DOTALL)
+        # Use robust regex handling for XML-like tags + git-style markers
+        # Matches: <DIFF> ... <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE ... </DIFF>
+        # or just the git-markers if the model forgets validity of tags
+        pattern = re.compile(
+            r"(?:<DIFF>)?\s*<{7}\s*SEARCH\s*\n(.*?)\n\s*={7}\s*\n(.*?)\n\s*>{7}\s*REPLACE\s*(?:</DIFF>)?",
+            re.DOTALL,
+        )
         matches = pattern.findall(diff_text)
         
         patched_text = original_text
         for search_block, replace_block in matches:
-             # Normalize line endings just in case
-             search_block = search_block.replace('\r\n', '\n')
-             replace_block = replace_block.replace('\r\n', '\n')
-             
-             if search_block.strip() == "":
-                 continue
+            # Normalize line endings just in case
+            search_block = search_block.replace('\r\n', '\n')
+            replace_block = replace_block.replace('\r\n', '\n')
+            
+            if search_block.strip() == "":
+                continue
 
-             if search_block in patched_text:
+            if search_block in patched_text:
                 patched_text = patched_text.replace(search_block, replace_block, 1)
-             else:
+            else:
                 # Try simple fuzzy match or logging
                 logger.warning(f"ImplementationAgent: Could not find search block:\n{search_block}")
+                # Optional: fallback to stricter normalization comparison? 
                 
         return patched_text
 
