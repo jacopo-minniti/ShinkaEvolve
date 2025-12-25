@@ -56,9 +56,7 @@ def query_qwen(
             json_schema["title"] = output_model.__name__
 
         args_dict["extra_body"] = {
-            "structured_outputs": {
-                "json": json_schema
-            }
+            "guided_json": json_schema
         }
         # Force temperature to something reasonable for constrained generation (optional)
         # but respecting kwargs if set.
