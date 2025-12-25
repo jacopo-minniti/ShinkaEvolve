@@ -70,7 +70,10 @@ def train_model(model, train_data, args, device) -> Dict:
             f"Max params exceeded: {get_stats(model)} > {args.max_params}"
         )
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    if hasattr(model, "compute_optimizer"):
+        optimizer = model.compute_optimizer()
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     
     all_steps = []
     for ep in train_data:

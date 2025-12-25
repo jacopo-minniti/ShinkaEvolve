@@ -28,13 +28,12 @@ from shinka.sibs.schema import SecondOrderGenome
 
 FOLDER_PREFIX = "gen"
 
-MINIMAL_TEMPLATE_CODE = """
+# REGION_ALPHA_START
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class Model(nn.Module):
-    # REGION_BODY_START
     def __init__(self):
         super().__init__()
         # TODO: Initialize components
@@ -42,16 +41,21 @@ class Model(nn.Module):
     def forward(self, x):
         # TODO: Implement forward pass
         pass
-    # REGION_BODY_END
+# REGION_ALPHA_END
 
-    # REGION_OBJECTIVE_START
+# REGION_PHI_START
     def compute_loss(self, batch, outputs):
         # TODO: Implement loss computation
         return torch.tensor(0.0, requires_grad=True)
 
     def compute_metrics(self, batch, outputs):
         return {"loss": 0.0, "test_accuracy": 0.0}
-    # REGION_OBJECTIVE_END
+# REGION_PHI_END
+
+# REGION_OMEGA_START
+    def compute_optimizer(self):
+        return torch.optim.Adam(self.parameters(), lr=1e-3)
+# REGION_OMEGA_END
 """
 
 @dataclass

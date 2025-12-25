@@ -409,6 +409,50 @@ class SecondOrderInitializer:
                      
         raise ValueError("Failed to generate SecondOrderGenome")
 
+SECOND_ORDER_INITIALIZER_SYS_PROMPT = """
+You are the SecondOrderInitializer.
+
+Role
+You translate a FirstOrderBiasPlan into an initial SecondOrderGenome. This is the step where abstract bias objectives are mapped into *concrete but still modular design choices*.
+
+Conceptual scope
+Second-order biases define *how* first-order biases are operationalized. They include:
+- Architectural motifs
+- Loss formulations and auxiliary objectives
+- Optimizer choices and training dynamics
+
+Genome structure
+The SecondOrderGenome must contain the following components:
+
+1. Alpha (Architectural realization)
+   How task-level biases are realized structurally.
+   Examples: recurrence vs. feedforward, attention mechanisms, memory modules, locality constraints.
+
+2. Phi (Objective realization)
+   How objective-level biases are enforced through the loss function.
+   Examples: primary loss, auxiliary losses, regularization terms, uncertainty modeling.
+
+3. Omega (Optimizer realization)
+   How training dynamics and optimization are handled.
+   Examples: optimizer choice (Adam/SGD), learning rate, schedulers (if applicable).
+
+For each component, you must:
+- Explicitly map first-order bias objectives to concrete mechanisms
+- Explain the intended effect of each design choice
+- Keep choices simple and interpretable
+- Avoid unnecessary hyperparameter tuning or exotic tricks
+
+Output format
+Output JSON only.
+The JSON must:
+- Preserve traceability to the original first-order biases
+- Clearly separate Alpha, Phi, and Omega sections
+- Include short rationales for each design choice
+
+Do not modify or reinterpret the original bias objectives.
+Do not include code.
+"""
+
 class DesignMutator:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
@@ -467,12 +511,15 @@ You have been given a SPECIFIC REGION of the code to modify.
 You must ONLY modify the code provided in the context.
 
 Conceptual scope
-- If Component is ALPHA (Architecture) or PHI (Info Flow):
-    - You are seeing the BODY region (__init__, forward).
-    - Modify structure and data flow.
-- If Component is OMEGA (Objective/Optimization):
-    - You are seeing the OBJECTIVE region (compute_loss, compute_metrics).
-    - Modify loss logic and metrics.
+- If Component is ALPHA (Architecture):
+    - You are seeing the ALPHA region (Imports, Class definition, __init__, forward).
+    - Modify structure, layers, and forward pass data flow.
+- If Component is PHI (Objective):
+    - You are seeing the PHI region (compute_loss, compute_metrics).
+    - Modify loss logic and metrics tracking.
+- If Component is OMEGA (Optimizer):
+    - You are seeing the OMEGA region (compute_optimizer).
+    - Modify optimizer configuration (e.g. Adam vs SGD, learning rates).
 
 Inputs
 You will receive:
@@ -511,12 +558,15 @@ class ImplementationAgent:
         region_tag_start = None
         region_tag_end = None
         
-        if component in ["Alpha", "Phi"]:
-            region_tag_start = "# REGION_BODY_START"
-            region_tag_end = "# REGION_BODY_END"
+        if component == "Alpha":
+            region_tag_start = "# REGION_ALPHA_START"
+            region_tag_end = "# REGION_ALPHA_END"
+        elif component == "Phi":
+            region_tag_start = "# REGION_PHI_START"
+            region_tag_end = "# REGION_PHI_END"
         elif component == "Omega":
-            region_tag_start = "# REGION_OBJECTIVE_START"
-            region_tag_end = "# REGION_OBJECTIVE_END"
+            region_tag_start = "# REGION_OMEGA_START"
+            region_tag_end = "# REGION_OMEGA_END"
             
         code_context = parent_code
         pre_context = ""
