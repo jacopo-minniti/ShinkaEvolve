@@ -33,7 +33,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class Model(nn.Module):
+class EvolvedModel(nn.Module):
     def __init__(self):
         super().__init__()
         # TODO: Initialize components
@@ -56,7 +56,6 @@ class Model(nn.Module):
     def compute_optimizer(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)
 # REGION_OMEGA_END
-"""
 
 @dataclass
 class EvolutionConfig:
