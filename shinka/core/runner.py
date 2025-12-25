@@ -244,7 +244,7 @@ class EvolutionRunner:
         for island_idx in range(num_islands):
             logger.info(f"Planning Island {island_idx}...")
             fo_plan = self.fo_planner.plan(island_idx, task_desc, dataset_type)
-            self.db.island_manager.set_island_plan(island_idx, fo_plan.to_yaml())
+            self.db.island_manager.set_island_plan(island_idx, fo_plan.model_dump_json())
             self.island_plans[island_idx] = fo_plan
             
             # Save plan to disk for inspection
@@ -347,8 +347,8 @@ class EvolutionRunner:
                 )
                 
                 # Reconstruct Genome objects
-                parent_genome = SecondOrderGenome.from_yaml(parent_prog.genome)
-                inspirations = [SecondOrderGenome.from_yaml(p.genome) for p in archive_progs + top_k_progs if p.genome]
+                parent_genome = SecondOrderGenome.model_validate_json(parent_prog.genome)
+                inspirations = [SecondOrderGenome.model_validate_json(p.genome) for p in archive_progs + top_k_progs if p.genome]
                 
                 # Context for mutation: The Island Plan (First Order)
                 # We need to know the island of the parent.
@@ -393,7 +393,7 @@ class EvolutionRunner:
                     logger.info(f"Crossover {comp}...")
                     
                     # Manual swap
-                    new_genome = SecondOrderGenome.from_yaml(parent_genome.to_yaml())
+                    new_genome = SecondOrderGenome.model_validate_json(parent_genome.model_dump_json())
                     partner_comp = getattr(partner.learner, comp)
                     setattr(new_genome.learner, comp, partner_comp)
                     patch_type = f"crossover_{comp}"
@@ -442,7 +442,7 @@ class EvolutionRunner:
                     top_k_insp_ids=[p.id for p in top_k_progs],
                     meta_patch_data={"patch_type": patch_type},
                     retry_count=0,
-                    genome_yaml=new_genome.to_yaml(),
+                    genome_yaml=new_genome.model_dump_json(),
                     job_dir=job_dir
                 ))
                 
@@ -484,7 +484,7 @@ class EvolutionRunner:
         if not correct and job.retry_count < self.evo_config.max_repair_attempts:
             logger.info(f"Job failed (Attempt {job.retry_count}). Attempting Repair...")
             try:
-                genome = SecondOrderGenome.from_yaml(job.genome_yaml)
+                genome = SecondOrderGenome.model_validate_json(job.genome_yaml)
                 
                 # Use passed artifact_dir?
                 repaired_code = self.implementation_agent.implement(
@@ -528,7 +528,7 @@ class EvolutionRunner:
                 # Fall through to save as failed
 
         # Reflection (if correct or final failure)
-        genome = SecondOrderGenome.from_yaml(job.genome_yaml)
+        genome = SecondOrderGenome.model_validate_json(job.genome_yaml)
         if results and results.get("metrics"):
              # Optional: Save reflection log
              genome = self.reflection_writer.reflect(genome, results.get("metrics", {}).get("public", {}))
@@ -560,7 +560,7 @@ class EvolutionRunner:
                 "genome_id": genome.genome_id if genome else None
             },
             island_idx=island_idx,
-            genome=genome.to_yaml() if genome else None
+            genome=genome.model_dump_json() if genome else None
         )
         self.db.add(db_program, verbose=True)
         self.db.save()
