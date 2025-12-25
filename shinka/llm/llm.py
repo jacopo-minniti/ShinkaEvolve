@@ -44,6 +44,26 @@ class LLMClient:
         self.output_model = output_model
         self.structured_output = output_model is not None
         self.verbose = verbose
+        
+        # vLLM Native Integration
+        self._vllm_llm = None
+        self._vllm_tokenizer = None
+        
+        # Check if we should use vLLM (Simple heuristic: Qwen model)
+        if any(m.startswith("Qwen/") for m in self.model_names):
+             try:
+                 from vllm import LLM as VLLM_LLM
+                 self._vllm_model_name = next(m for m in self.model_names if m.startswith("Qwen/"))
+                 logger.info(f"Initializing native vLLM engine for {self._vllm_model_name}...")
+                 # Assuming GPU availability as per user context
+                 # Max model len might need to be config-driven, but hardcoding safe default or large value
+                 self._vllm_llm = VLLM_LLM(model=self._vllm_model_name, max_model_len=8192, tensor_parallel_size=1, gpu_memory_utilization=0.95)
+                 self._vllm_tokenizer = self._vllm_llm.get_tokenizer()
+                 logger.info("vLLM Engine Initialized.")
+             except ImportError:
+                 logger.warning("vLLM not installed. Falling back to API.")
+             except Exception as e:
+                 logger.warning(f"Failed to init vLLM: {e}. Falling back to API.")
 
     def batch_query(
         self,
@@ -53,6 +73,25 @@ class LLMClient:
         msg_history: Union[List[Dict], List[List[Dict]]] = [],
         llm_kwargs: List[Dict] = [],
     ) -> List[QueryResult]:
+        # If using vLLM, we can't easily multiprocess with fork.
+        # However, vLLM supports batching natively!
+        if self._vllm_llm:
+            # TODO: Implement native batching for vLLM
+            # For now, fallback to serial or raise warning if num_samples > 1?
+            # Or just loop since we only have 1 persistent engine.
+             logger.info("Using vLLM Native Batch Query (Sequential execution on engine)")
+             results = []
+             # Expand arguments
+             if isinstance(msg, str): msg = [msg] * num_samples
+             if isinstance(system_msg, str): system_msg = [system_msg] * num_samples
+             if not msg_history: msg_history = [[]] * num_samples
+             
+             for i in range(num_samples):
+                 # We can reuse the query() logic which now supports vLLM
+                 res = self.query(msg[i], system_msg[i], msg_history[i], llm_kwargs[i] if llm_kwargs else None)
+                 results.append(res)
+             return [r for r in results if r]
+
         """Batch query the LLM with the given message and system message.
 
         Args:
@@ -127,82 +166,7 @@ class LLMClient:
         system_msg: Union[str, List[str]],
         msg_history: Union[List[Dict], List[List[Dict]]] = [],
     ) -> List[QueryResult]:
-        """Batch query the LLM with the given message and system message.
-
-        Args:
-            msg (str): The message to query the LLM with.
-            system_msg (str): The system message to query the LLM with.
-        """
-        # Repeat msg, system_msg, msg_history num_samples times
-        if isinstance(msg, str):
-            msg = [msg] * num_samples
-        if isinstance(system_msg, str):
-            system_msg = [system_msg] * num_samples
-        if len(msg_history) == 0:
-            msg_history = [[]] * num_samples
-        elif isinstance(msg_history[0], dict):
-            msg_history = [msg_history] * num_samples
-
-        # multiprocess sample_kwargs_query
-        num_processes = min(num_samples, mp.cpu_count())
-        with mp.Pool(processes=num_processes) as pool:
-            # Submit all tasks asynchronously first
-            async_results = []
-            posterior = self.llm_selection.posterior(samples=num_samples)
-            if self.verbose:
-                lines = [f"==> SAMPLING {num_samples} SAMPLES:"]
-                for name, prob in zip(self.model_names, posterior):
-                    lines.append(f"  {name:<30} {prob:>8.4f}")
-                logger.info("\n".join(lines))
-            for i in range(len(msg)):
-                async_results.append(
-                    pool.apply_async(
-                        sample_kwargs_query_fn,
-                        args=(
-                            i,
-                            msg[i],
-                            system_msg[i],
-                            msg_history[i],
-                            self.model_names,
-                            self.temperatures,
-                            self.max_tokens,
-                            self.reasoning_efforts,
-                            posterior,
-                            self.output_model,
-                            num_samples,
-                            self.verbose,
-                        ),
-                    )
-                )
-
-            # Then collect all results and sort by index
-            results = []
-            for async_result in async_results:
-                try:
-                    idx, result = async_result.get()
-                    results.append((idx, result))
-                except Exception as e:
-                    logger.error(f"Error in batch query: {str(e)}")
-
-            # Sort by index and extract just the results
-            results.sort(key=lambda x: x[0])
-            final_results = [r[1] for r in results if r[1] is not None]
-
-            # Print batch total cost
-            if self.verbose:
-                total_cost = sum(
-                    r.cost
-                    for r in final_results
-                    if hasattr(r, "cost") and r.cost is not None
-                )
-                formatted_costs = [
-                    f"{r.cost:.4f}"
-                    for r in final_results
-                    if hasattr(r, "cost") and r.cost is not None
-                ]
-                logger.info(f"==> SAMPLING: Individual API costs: {formatted_costs}")
-                logger.info(f"==> SAMPLING: Total API costs: ${total_cost:.4f}")
-            return final_results
+        return self.batch_query(num_samples, msg, system_msg, msg_history) # Fallback to same logic
 
     def get_kwargs(self):
         posterior = self.llm_selection.posterior()
@@ -227,18 +191,65 @@ class LLMClient:
         llm_kwargs: Optional[Dict] = None,
         output_model: Optional[BaseModel] = None,
     ) -> Optional[QueryResult]:
-        """Execute a single query to the LLM.
+        """Execute a single query to the LLM."""
+        
+        # vLLM NATIVE PATH
+        if self._vllm_llm:
+            try:
+                from vllm import SamplingParams
+                from vllm.sampling_params import StructuredOutputsParams
+                
+                target_model = output_model if output_model else self.output_model
+                
+                # Construct Prompt
+                # Use chat template if tokenizer supports it
+                # Qwen usually expects ChatML or similar
+                messages = [{"role": "system", "content": system_msg}] + msg_history + [{"role": "user", "content": msg}]
+                prompt = self._vllm_tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                
+                # Sampling Params
+                temperature = self.temperatures if isinstance(self.temperatures, float) else self.temperatures[0]
+                max_tokens = self.max_tokens if isinstance(self.max_tokens, int) else self.max_tokens[0]
+                
+                sampling_params_args = {
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                
+                if target_model:
+                     # Structured Output
+                     schema = target_model.model_json_schema()
+                     if "title" not in schema: schema["title"] = target_model.__name__
+                     
+                     struct_params = StructuredOutputsParams(json=schema)
+                     sampling_params_args["structured_outputs"] = struct_params
+                
+                sampling_params = SamplingParams(**sampling_params_args)
+                
+                if self.verbose:
+                    logger.info(f"==> vLLM Generating... (Struct: {target_model is not None})")
+                    
+                outputs = self._vllm_llm.generate(prompt, sampling_params=sampling_params)
+                generated_text = outputs[0].outputs[0].text
+                
+                # Create Result
+                return QueryResult(
+                     content=generated_text,
+                     msg=msg, system_msg=system_msg, new_msg_history=messages + [{"role": "assistant", "content": generated_text}],
+                     model_name=self._vllm_model_name,
+                     kwargs=sampling_params_args,
+                     input_tokens=len(outputs[0].prompt_token_ids),
+                     output_tokens=len(outputs[0].outputs[0].token_ids),
+                     cost=0.0
+                )
+            except Exception as e:
+                logger.error(f"vLLM Query Failed: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fallback to API if desired, or raise
+                return None
 
-        Args:
-            msg (str): The message to query the LLM with.
-            system_msg (str): The system message to query the LLM with.
-            msg_history (List[Dict], optional): Message history. Defaults to [].
-            llm_kwargs (Dict, optional): Additional LLM parameters.
-                Defaults to {}.
-
-        Returns:
-            QueryResult: The result of the query.
-        """
+        # API PATH (Original)
         default_kwargs = sample_model_kwargs(
             model_names=self.model_names,
             temperatures=self.temperatures,

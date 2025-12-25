@@ -255,23 +255,10 @@ class FirstOrderPlanner:
 
     def plan(self, island_id: int, task_description: str, dataset_type: str) -> FirstOrderBiasPlan:
         user_msg = f"Task Description: {task_description}\nDataset Type: {dataset_type}\nIsland ID: {island_id}\n\nGenerate a FirstOrderBiasPlan in JSON format."
-        # Pass structured output schema manually via llm_kwargs per vLLM docs
-        json_schema = FirstOrderBiasPlan.model_json_schema()
-        if "title" not in json_schema:
-            json_schema["title"] = FirstOrderBiasPlan.__name__
-            
-        llm_kwargs = {
-            "extra_body": {
-                "structured_outputs": {
-                    "json": json_schema
-                }
-            }
-        }
-        
         response = self.llm.query(
             msg=user_msg, 
             system_msg=FIRST_ORDER_PLANNER_SYS_PROMPT,
-            llm_kwargs=llm_kwargs
+            output_model=FirstOrderBiasPlan
         )
         
         if response and response.content:
@@ -315,23 +302,10 @@ class SecondOrderInitializer:
         # Note: first_order_plan.to_yaml() now essentially returns JSON via our mixin, or we can use model_dump_json explicitly
         user_msg = f"Task Description: {task_description}\nFirst Order Plan:\n{first_order_plan.model_dump_json(indent=2)}\n\nGenerate an initial SecondOrderGenome in JSON format."
         
-        # Pass structured output schema manually via llm_kwargs per vLLM docs
-        json_schema = SecondOrderGenome.model_json_schema()
-        if "title" not in json_schema:
-            json_schema["title"] = SecondOrderGenome.__name__
-            
-        llm_kwargs = {
-            "extra_body": {
-                "structured_outputs": {
-                    "json": json_schema
-                }
-            }
-        }
-        
         response = self.llm.query(
             msg=user_msg, 
             system_msg=SECOND_ORDER_INITIALIZER_SYS_PROMPT,
-            llm_kwargs=llm_kwargs
+            output_model=SecondOrderGenome
         )
         
         if response and response.content:
@@ -638,23 +612,10 @@ class ReflectionWriter:
         
         Update the 'reflection' field for biases.
         """
-        # Pass structured output schema manually via llm_kwargs per vLLM docs
-        json_schema = SecondOrderGenome.model_json_schema()
-        if "title" not in json_schema:
-            json_schema["title"] = SecondOrderGenome.__name__
-            
-        llm_kwargs = {
-            "extra_body": {
-                "structured_outputs": {
-                    "json": json_schema
-                }
-            }
-        }
-        
         response = self.llm.query(
             msg=user_msg, 
             system_msg=REFLECTION_WRITER_SYS_PROMPT,
-            llm_kwargs=llm_kwargs
+            output_model=SecondOrderGenome
         )
         
         if response and response.content:
