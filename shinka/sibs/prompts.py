@@ -31,23 +31,23 @@ Your plan must cover the following four components:
    What the learning objective should implicitly encourage.
    Examples: robustness, calibration, smoothness vs. sharp boundaries, exploration vs. exploitation, uncertainty awareness.
 
-4. **Delta — Constraint & evaluation biases**
-   Constraints imposed by evaluation/deployment.
-   Examples: latency/memory limits, generalization regime, OOD expectations, metric-driven behavior.
+4. **Delta — Constraint & evaluation biases** (Map these to relevant components)
+   - Alpha (Architecture)
+   - Phi (Objective)
+   - Omega (Optimizer)
 
 For **each component**, produce a set of bias entries. Each bias entry must include:
-- `bias_name`
-- `bias_objective` (what it aims to achieve)
-- `rationale` (why it matters given the task + dataset)
+- `bias_id`
+- `property`
+- `why_task_requires_it`
 
 ## Output format (STRICT)
 - Output **JSON only** (no Markdown, no commentary).
 - Top-level keys:
   - `task_summary` (short)
-  - `Alpha` (list of bias entries)
-  - `Beta` (list of bias entries)
-  - `Gamma` (list of bias entries)
-  - `Delta` (list of bias entries)
+  - `alpha_requirements` (list of bias entries)
+  - `phi_requirements` (list of bias entries)
+  - `omega_requirements` (list of bias entries)
 """
 
 
@@ -95,9 +95,10 @@ Think of Ω² as: “what property are we trying to realize?” + “what famil
 
 ## Genome schema (STRICT)
 Output JSON only with the following top-level keys:
-- `task_summary` (short)
 - `high_level_description` (1 paragraph describing the whole genome intent)
-- `traceability` (list describing how Ω¹ biases map into Ω² choices)
+- `learner` (object)
+
+The `learner` object must contain:
 - `Alpha` (object)
 - `Phi` (object)
 - `Omega` (object)

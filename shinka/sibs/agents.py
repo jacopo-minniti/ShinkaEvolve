@@ -3,7 +3,7 @@ import yaml
 import re
 from typing import List, Optional, Tuple, Any, Dict
 from shinka.llm.llm import LLMClient
-from shinka.sibs.schema import FirstOrderBiasPlan, SecondOrderGenome
+from shinka.sibs.schema import FirstOrderBiasPlan, SecondOrderGenome, FirstOrderBiasSpec, BaseSecondOrderGenome
 from shinka.database import Program
 from shinka.sibs.prompts import (
     FIRST_ORDER_PLANNER_SYS_PROMPT,
@@ -26,12 +26,18 @@ class FirstOrderPlanner:
         response = self.llm.query(
             msg=user_msg, 
             system_msg=FIRST_ORDER_PLANNER_SYS_PROMPT,
-            output_model=FirstOrderBiasPlan
+            output_model=FirstOrderBiasSpec
         )
         
         if response and response.content:
             logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
-            return FirstOrderBiasPlan.model_validate_json(response.content)
+            spec = FirstOrderBiasSpec.model_validate_json(response.content)
+            # Enrich with system fields
+            return FirstOrderBiasPlan(
+                first_order_version=0.1,
+                island_id=island_id,
+                **spec.model_dump()
+            )
 
         raise ValueError("Failed to generate FirstOrderBiasPlan")
 
@@ -46,12 +52,22 @@ class SecondOrderInitializer:
         response = self.llm.query(
             msg=user_msg, 
             system_msg=SECOND_ORDER_INITIALIZER_SYS_PROMPT,
-            output_model=SecondOrderGenome
+            output_model=BaseSecondOrderGenome
         )
         
         if response and response.content:
             logger.debug(f"SecondOrderGenome Raw Response:\n{response.content}")
-            return SecondOrderGenome.model_validate_json(response.content)
+            spec = BaseSecondOrderGenome.model_validate_json(response.content)
+            # Enrich with system fields
+            return SecondOrderGenome(
+                genome_version=0.1,
+                genome_id="genome_0",
+                island_id=first_order_plan.island_id,
+                generation=0,
+                parent_id=None,
+                fitness=None,
+                **spec.model_dump()
+            )
 
         raise ValueError("Failed to generate SecondOrderGenome")
 
@@ -64,11 +80,14 @@ class DesignMutator:
                inspirations: List[SecondOrderGenome], first_order_plan: Optional[str] = None) -> SecondOrderGenome:
         
         # Use JSON for consistency with other agents, preserving logic
-        insp_str = "\n".join([f"Inspiration Genome:\n{g.model_dump_json(indent=2)}" for g in inspirations])
+        # Use BaseSecondOrderGenome for inspirations to hide system fields
+        insp_str = "\n".join([f"Inspiration Genome:\n{BaseSecondOrderGenome(**g.model_dump()).model_dump_json(indent=2)}" for g in inspirations])
+        
+        base_parent = BaseSecondOrderGenome(**parent_genome.model_dump())
         
         user_msg = f"""
         Parent Genome:
-        {parent_genome.model_dump_json(indent=2)}
+        {base_parent.model_dump_json(indent=2)}
         
         Component to Mutate: {component_to_mutate}
         """
@@ -84,13 +103,25 @@ class DesignMutator:
         """
         response = self.llm.query(msg=user_msg, system_msg=DESIGN_MUTATOR_SYS_PROMPT)
         if response and response.content:
-             # Apply the diff to the parent JSON string
+             # Apply the diff to the partial JSON string
              # The existing diff logic works on text, so it handles JSON strings fine
-             patched_json = self._apply_diff(parent_genome.model_dump_json(indent=2), response.content)
+             patched_json = self._apply_diff(base_parent.model_dump_json(indent=2), response.content)
              
-             # Clean up potential artifacts if diff wasn't perfect, though JSON is fragile to diffs.
-             # However, Search/Replace blocks are exact text matches, so if the LLM copies lines correctly, it works.
-             return SecondOrderGenome.model_validate_json(patched_json)
+             # Clean up potential artifacts if diff wasn't perfect.
+             new_spec = BaseSecondOrderGenome.model_validate_json(patched_json)
+             
+             # Reconstruct full genome with parent's system fields
+             # Note: Typically mutation might imply a new ID or generation, but that logic might be external.
+             # We preserve parent's ID/Island etc. for now as per "enrich after/before based on hard data" logic.
+             return SecondOrderGenome(
+                 genome_version=parent_genome.genome_version,
+                 genome_id=parent_genome.genome_id,
+                 island_id=parent_genome.island_id,
+                 parent_id=parent_genome.parent_id,
+                 generation=parent_genome.generation,
+                 fitness=parent_genome.fitness,
+                 **new_spec.model_dump()
+             )
         raise ValueError("Failed to mutate genome")
 
     def _apply_diff(self, original_text: str, diff_text: str) -> str:
@@ -159,7 +190,7 @@ class ImplementationAgent:
 
         user_msg = f"""
         Target Genome Specification:
-        {genome.model_dump_json(indent=2)}
+        {BaseSecondOrderGenome(**genome.model_dump()).model_dump_json(indent=2)}
         
         Code Region to Modify:
         ```python
@@ -231,9 +262,10 @@ class ReflectionWriter:
         self.llm = llm_client
 
     def reflect(self, genome: SecondOrderGenome, metrics: Dict[str, float]) -> SecondOrderGenome:
+        base_genome = BaseSecondOrderGenome(**genome.model_dump())
         user_msg = f"""
         Genome:
-        {genome.model_dump_json(indent=2)}
+        {base_genome.model_dump_json(indent=2)}
         
         Evaluation Metrics:
         {metrics}
@@ -244,7 +276,7 @@ class ReflectionWriter:
         response = self.llm.query(
             msg=user_msg, 
             system_msg=REFLECTION_WRITER_SYS_PROMPT,
-            output_model=SecondOrderGenome
+            output_model=BaseSecondOrderGenome
         )
         
         if response and response.content:
@@ -257,7 +289,17 @@ class ReflectionWriter:
              content = content.strip()
              
              try:
-                 return SecondOrderGenome.model_validate_json(content)
+                 new_spec = BaseSecondOrderGenome.model_validate_json(content)
+                 # Merge back
+                 return SecondOrderGenome(
+                    genome_version=genome.genome_version,
+                    genome_id=genome.genome_id,
+                    island_id=genome.island_id,
+                    parent_id=genome.parent_id,
+                    generation=genome.generation,
+                    fitness=genome.fitness,
+                    **new_spec.model_dump()
+                 )
              except Exception as e:
                  logger.warning(f"Failed to parse reflected genome JSON: {e}")
                  
@@ -265,7 +307,18 @@ class ReflectionWriter:
                  repaired_content = _repair_json(content)
                  try:
                      logger.info("Attempting to repair JSON...")
-                     return SecondOrderGenome.model_validate_json(repaired_content)
+                     new_spec = BaseSecondOrderGenome.model_validate_json(repaired_content)
+              
+                     # Merge back
+                     return SecondOrderGenome(
+                        genome_version=genome.genome_version,
+                        genome_id=genome.genome_id,
+                        island_id=genome.island_id,
+                        parent_id=genome.parent_id,
+                        generation=genome.generation,
+                        fitness=genome.fitness,
+                        **new_spec.model_dump()
+                     )
                  except Exception as inner_e:
                      logger.error(f"Repair failed: {inner_e}")
                      logger.debug(f"Problematic JSON Content:\n{content}")
