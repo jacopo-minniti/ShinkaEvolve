@@ -408,7 +408,7 @@ class DesignMutator:
         self.llm = llm_client
 
     def mutate(self, parent_genome: SecondOrderGenome, component_to_mutate: str, 
-               inspirations: List[SecondOrderGenome]) -> SecondOrderGenome:
+               inspirations: List[SecondOrderGenome], first_order_plan: Optional[str] = None) -> SecondOrderGenome:
         
         # Use JSON for consistency with other agents, preserving logic
         insp_str = "\n".join([f"Inspiration Genome:\n{g.model_dump_json(indent=2)}" for g in inspirations])
@@ -418,7 +418,12 @@ class DesignMutator:
         {parent_genome.model_dump_json(indent=2)}
         
         Component to Mutate: {component_to_mutate}
+        """
         
+        if first_order_plan:
+            user_msg += f"\n\nContext - First Order Bias Plan (Island):\n{first_order_plan}\n"
+        
+        user_msg += f"""
         Inspirations:
         {insp_str}
         
@@ -508,7 +513,15 @@ class ImplementationAgent:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    def implement(self, genome: SecondOrderGenome, parent_code: str, previous_errors: Optional[str] = None, component: str = "All") -> str:
+    def implement(
+        self, 
+        genome: SecondOrderGenome, 
+        parent_code: str, 
+        previous_errors: Optional[str] = None, 
+        component: str = "All", 
+        artifact_dir: Optional[str] = None,
+        eval_script_content: Optional[str] = None
+    ) -> str:
         
         # Determine strict region based on component
         region_tag_start = None
@@ -551,6 +564,10 @@ class ImplementationAgent:
         {code_context}
         ```
         """
+        
+        if eval_script_content:
+            user_msg += f"\n\nReference Evaluation Script (evaluate.py):\n```python\n{eval_script_content}\n```\n"
+            
         if previous_errors:
             user_msg += f"\nPrevious Implementation Errors:\n{previous_errors}"
         else:
@@ -559,6 +576,15 @@ class ImplementationAgent:
         formatted_sys_msg = IMPLEMENTATION_AGENT_SYS_PROMPT.format(component=component)
         response = self.llm.query(msg=user_msg, system_msg=formatted_sys_msg)
         
+        # Save interaction log
+        if artifact_dir:
+             try:
+                 log_path = Path(artifact_dir) / "implementation_log.md"
+                 with open(log_path, "w", encoding="utf-8") as f:
+                     f.write(f"# Implementation Log\n\n## System Message\n{formatted_sys_msg}\n\n## User Message\n{user_msg}\n\n## Response\n{response.content if response else 'NO RESPONSE'}\n")
+             except Exception as e:
+                 logger.warning(f"Failed to save implementation log: {e}")
+
         if response and response.content:
             logger.debug(f"ImplementationAgent Raw Response ({component}):\n{response.content}")
             # Apply diff to the CONTEXT (partial code)

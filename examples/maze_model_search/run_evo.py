@@ -76,6 +76,8 @@ evo_config = EvolutionConfig(
         max_tokens=20000,
     ),
     results_dir="results/maze_qwen3-30B-bias",
+    max_params=50_000,
+    max_train_steps=5000,
 )
 
 if __name__ == "__main__":

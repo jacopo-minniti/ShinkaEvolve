@@ -73,6 +73,9 @@ class EvolutionConfig:
     # SIBS specific
     mutation_weights: Dict[str, float] = field(default_factory=lambda: {"Alpha": 0.8, "Omega": 0.05, "Phi": 0.15})
     max_repair_attempts: int = 2
+    # Constraints
+    max_params: int = 100_000
+    max_train_steps: int = 2000
 
 @dataclass
 class RunningJob:
@@ -89,6 +92,8 @@ class RunningJob:
     retry_count: int = 0
     # For repair, we need to know the genome we were trying to implement
     genome_yaml: Optional[str] = None
+    # Track the job directory for artifact saving
+    job_dir: Optional[str] = None
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -115,8 +120,8 @@ class EvolutionRunner:
 
         if self.verbose:
             # Create log file path in results directory
-            log_filename = f"{self.results_dir}/evolution_run.log"
             Path(self.results_dir).mkdir(parents=True, exist_ok=True)
+            log_filename = f"{self.results_dir}/evolution_run.log"
 
             # Set up logging with both console and file handlers
             # Respect existing level if set (e.g. from run_evo.py)
@@ -171,6 +176,18 @@ class EvolutionRunner:
         self.best_program_id: Optional[str] = None
         self.next_generation_to_submit = 0
         self.completed_generations = 0
+        
+        # Load evaluate.py content for context
+        self.eval_script_content = ""
+        if hasattr(job_config, "eval_program_path") and job_config.eval_program_path:
+            try:
+                self.eval_script_content = Path(job_config.eval_program_path).read_text(encoding="utf-8")
+                logger.info("Loaded evaluate.py content for context.")
+            except Exception as e:
+                logger.warning(f"Failed to read evaluate.py: {e}")
+        
+        # Store plans
+        self.island_plans = {}
 
     def run(self):
         """Main Evolutionary Loop (SIBS)"""
@@ -179,9 +196,13 @@ class EvolutionRunner:
         
         logger.info(f"Starting SIBS Evolution: {target_gens} generations")
 
-        # Generation 0 (Sequential Init)
+        # Phase 1: Initialize Islands (Plans)
+        if not self.db.island_manager.get_island_plan(0): # Check if already planned
+            self._initialize_islands()
+
+        # Phase 2: Generation 0 (Initial Population from Plans)
         if self.completed_generations == 0 and target_gens > 0:
-            self._run_generation_0()
+            self._spawn_initial_population()
             self.completed_generations = 1
             self.next_generation_to_submit = 1
         
@@ -207,44 +228,103 @@ class EvolutionRunner:
         self.db.print_summary()
         logger.info("SIBS Evolution Completed.")
 
-    def _run_generation_0(self):
-        """SIBS Gen 0: Plan -> Init -> Implement (for each island)"""
-        logger.info("Initializing SIBS Generation 0...")
+    def _initialize_islands(self):
+        """Generate First Order Bias Plans for each island."""
+        logger.info("Phase 1: Generating Island Plans...")
         
-        dir_path = f"{self.results_dir}/{FOLDER_PREFIX}_0"
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
-        results_dir = f"{dir_path}/results"
-        Path(results_dir).mkdir(parents=True, exist_ok=True)
-        
-        task_desc = self.evo_config.task_sys_msg or "Solve the task."
-        dataset_type = "default"
         num_islands = getattr(self.db.config, "num_islands", 1)
         if num_islands < 1: num_islands = 1
+        
+        task_desc = self.evo_config.task_sys_msg or "Solve the task."
+        # Append constraints to task desc
+        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.max_train_steps}"
+        
+        dataset_type = "default"
 
         for island_idx in range(num_islands):
-            logger.info(f"Creating Island {island_idx}...")
-            # Plan
+            logger.info(f"Planning Island {island_idx}...")
             fo_plan = self.fo_planner.plan(island_idx, task_desc, dataset_type)
             self.db.island_manager.set_island_plan(island_idx, fo_plan.to_yaml())
+            self.island_plans[island_idx] = fo_plan
             
-            # Init Genome
+            # Save plan to disk for inspection
+            plan_dir = f"{self.results_dir}/island_{island_idx}"
+            Path(plan_dir).mkdir(parents=True, exist_ok=True)
+            with open(f"{plan_dir}/plan.json", "w") as f:
+                f.write(fo_plan.model_dump_json(indent=2))
+
+    def _spawn_initial_population(self):
+        """SIBS Gen 0: Init -> Implement (for each island) multiple times if needed."""
+        logger.info("Phase 2: Spawning Initial Population (Gen 0)...")
+        
+        current_gen = 0
+        gen_dir = f"{self.results_dir}/{FOLDER_PREFIX}_{current_gen}"
+        Path(gen_dir).mkdir(parents=True, exist_ok=True)
+        
+        num_islands = getattr(self.db.config, "num_islands", 1)
+        if num_islands < 1: num_islands = 1
+        
+        task_desc = self.evo_config.task_sys_msg or "Solve the task."
+        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.max_train_steps}"
+
+        # In Gen 0, we might want multiple individuals per island if population size > num_islands
+        # For now, let's assume 1 per island as per original code logic, or maybe more?
+        # User said "islands are just grouped... used to start". 
+        # Typically we want an initial population. Let's spawn 1 per island for now to match strict resource limits
+        # unless configured otherwise.
+        
+        for island_idx in range(num_islands):
+            # Load plan if not in memory
+            if island_idx not in self.island_plans:
+                p_yaml = self.db.island_manager.get_island_plan(island_idx)
+                # Need to parse yaml back to obj... simpler to just assume it's there or user flow expects it.
+                # If we restarted, we might need to reload. For now assume fresh run.
+                pass
+
+            # Create individual
+            # 1. Init Second Order Genome from Plan
+            # We need the plan object.
+            # Hack: if we don't have the object, we re-parse or skip. 
+            # Ideally agents return objects.
+            fo_plan = self.island_plans.get(island_idx)
+            if not fo_plan: 
+                logger.warning(f"No plan for island {island_idx}, skipping.")
+                continue
+
             so_genome = self.so_initializer.initialize(fo_plan, task_desc)
             so_genome.island_id = island_idx
             so_genome.generation = 0
             so_genome.genome_id = str(uuid.uuid4())
             
-            # Implement (Diff from Template)
-            code = self.implementation_agent.implement(so_genome, parent_code=MINIMAL_TEMPLATE_CODE)
+            # 2. Implement (Diff from Template)
+            # Create a separate folder for this job
+            job_uid = uuid.uuid4().hex[:6]
+            job_dir = f"{gen_dir}/job_{job_uid}"
+            Path(job_dir).mkdir(parents=True, exist_ok=True)
             
-            # Save & Run
-            # We use a unique filename per island to avoid collisions if running essentially parallel
-            # But standard shinka expects 'main.py' often. Since we run sequentially here:
-            fname = f"{dir_path}/main_island_{island_idx}.py"
+            # Save genome
+            with open(f"{job_dir}/genome.json", "w") as f:
+                f.write(so_genome.model_dump_json(indent=2))
+            
+            code = self.implementation_agent.implement(
+                genome=so_genome,
+                parent_code=MINIMAL_TEMPLATE_CODE,
+                component="All",
+                artifact_dir=job_dir,
+                eval_script_content=self.eval_script_content
+            )
+            
+            # Save Main
+            fname = f"{job_dir}/main.py"
             with open(fname, "w", encoding="utf-8") as f:
                 f.write(code)
             
-            logger.info(f"Evaluating Island {island_idx} Gen 0...")
-            results, rtime = self.scheduler.run(fname, results_dir)
+            logger.info(f"Submitting Gen 0 seed for Island {island_idx}...")
+            # Results go to job_dir (evaluate.py writes there if we pass it as results_dir arg?
+            # Wait, `runner` call to scheduler passes `results_dir`.
+            # If scheduler runs evaluate.py, does it pass this dir?
+            # LocalJobConfig usually passes --results_dir {results_dir}
+            results, rtime = self.scheduler.run(fname, job_dir)
             
             self._save_result_to_db(
                 results, rtime, code, so_genome, None, 0, island_idx=island_idx
@@ -255,10 +335,8 @@ class EvolutionRunner:
         current_gen = self.next_generation_to_submit
         logger.info(f"Preparing Gen {current_gen}...")
         
-        dir_path = f"{self.results_dir}/{FOLDER_PREFIX}_{current_gen}"
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
-        results_dir = f"{dir_path}/results"
-        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        gen_dir = f"{self.results_dir}/{FOLDER_PREFIX}_{current_gen}"
+        Path(gen_dir).mkdir(parents=True, exist_ok=True)
         
         for resample in range(self.evo_config.max_patch_resamples):
             try:
@@ -272,15 +350,40 @@ class EvolutionRunner:
                 parent_genome = SecondOrderGenome.from_yaml(parent_prog.genome)
                 inspirations = [SecondOrderGenome.from_yaml(p.genome) for p in archive_progs + top_k_progs if p.genome]
                 
+                # Context for mutation: The Island Plan (First Order)
+                # We need to know the island of the parent.
+                island_idx = parent_prog.island_idx if parent_prog.island_idx is not None else 0
+                
+                fo_plan_str = None
+                if island_idx in self.island_plans:
+                    fo_plan_str = self.island_plans[island_idx].model_dump_json(indent=2)
+                else:
+                    # Try to fetch from DB manager
+                    fo_yaml = self.db.island_manager.get_island_plan(island_idx)
+                    # We might need to convert yaml to json or just pass yaml. Agents usually handle both but prompt says "First Order Bias Plan". 
+                    # Assuming yaml string is fine.
+                    if fo_yaml:
+                        fo_plan_str = fo_yaml
+
+                
                 # 2. Mutate (Diff) or Crossover (Swap)
+                target_comp = "All" # Default
+                
                 # Mutation Probs
                 if np.random.random() < 0.8: # TODO: Make configurable
                     # Mutation
                     weights = self.evo_config.mutation_weights
                     comp = np.random.choice(list(weights.keys()), p=list(weights.values()))
                     logger.info(f"Mutating {comp}...")
-                    new_genome = self.design_mutator.mutate(parent_genome, comp, inspirations)
+                    
+                    new_genome = self.design_mutator.mutate(
+                        parent_genome, 
+                        comp, 
+                        inspirations,
+                        first_order_plan=fo_plan_str
+                    )
                     patch_type = f"mutation_{comp}"
+                    target_comp = comp
                 else:
                     # Crossover
                     if not inspirations:
@@ -289,40 +392,49 @@ class EvolutionRunner:
                     comp = np.random.choice(["Alpha", "Omega", "Phi"])
                     logger.info(f"Crossover {comp}...")
                     
-                    # Manual swap (no LLM needed for swap, pure structural op)
+                    # Manual swap
                     new_genome = SecondOrderGenome.from_yaml(parent_genome.to_yaml())
                     partner_comp = getattr(partner.learner, comp)
                     setattr(new_genome.learner, comp, partner_comp)
                     patch_type = f"crossover_{comp}"
-
+                    target_comp = comp # Technically we swapped this component, so we implement it (or All?)
+                    # If we swap, the code for that component changes.
+                    # But if we swap "Alpha", we need to rewrite Alpha region.
+                
                 new_genome.generation = current_gen
                 new_genome.parent_id = parent_genome.genome_id
                 
                 # 3. Implement (Code Diff)
-                # We diff against the Parent's code!
                 parent_code = parent_prog.code
                 
-                # If mutation, we focus on that component. If crossover, we treat it as "All" or similar?
-                # Actually for crossover we swapped a component, so we really want to implement checks for that component?
-                # But since the genome changed structurally at a high level, "implement" might need to see what changed.
-                # Simplest is: if mutation, pass comp. If crossover, pass "All" (or the swapped comp if we trust the agent).
-                # The user requested enforcing strict division.
-                # For mutation, we know 'comp' changed.
-                target_comp = comp if "mutation" in patch_type else "All"
+                # Setup Job Directory
+                job_uid = uuid.uuid4().hex[:6]
+                job_dir = f"{gen_dir}/job_{job_uid}"
+                Path(job_dir).mkdir(parents=True, exist_ok=True)
                 
-                code = self.implementation_agent.implement(new_genome, parent_code=parent_code, component=target_comp)
+                # Save Genome
+                with open(f"{job_dir}/genome.json", "w") as f:
+                    f.write(new_genome.model_dump_json(indent=2))
+                
+                code = self.implementation_agent.implement(
+                    genome=new_genome, 
+                    parent_code=parent_code, 
+                    component=target_comp,
+                    artifact_dir=job_dir,
+                    eval_script_content=self.eval_script_content
+                )
                 
                 # 4. Submit
-                exec_fname = f"{dir_path}/main_{uuid.uuid4().hex[:6]}.py"
+                exec_fname = f"{job_dir}/main.py"
                 with open(exec_fname, "w", encoding="utf-8") as f:
                     f.write(code)
                 
-                job_id = self.scheduler.submit_async(exec_fname, results_dir)
+                job_id = self.scheduler.submit_async(exec_fname, job_dir)
                 
                 self.running_jobs.append(RunningJob(
                     job_id=job_id,
                     exec_fname=exec_fname,
-                    results_dir=results_dir,
+                    results_dir=job_dir, # Use job_dir as results_dir
                     start_time=time.time(),
                     generation=current_gen,
                     parent_id=parent_prog.id,
@@ -330,7 +442,8 @@ class EvolutionRunner:
                     top_k_insp_ids=[p.id for p in top_k_progs],
                     meta_patch_data={"patch_type": patch_type},
                     retry_count=0,
-                    genome_yaml=new_genome.to_yaml()
+                    genome_yaml=new_genome.to_yaml(),
+                    job_dir=job_dir
                 ))
                 
                 self.next_generation_to_submit += 1
@@ -338,6 +451,7 @@ class EvolutionRunner:
 
             except Exception as e:
                 logger.warning(f"Resample failed: {e}")
+                # traceback.print_exc()
                 continue
 
     def _check_completed_jobs(self) -> List[RunningJob]:
@@ -355,6 +469,7 @@ class EvolutionRunner:
         """Handle job completion, including Reflection and Repair."""
         end_time = time.time()
         rtime = end_time - job.start_time
+        # results_dir for get_job_results is job_dir
         results = self.scheduler.get_job_results(job.job_id, job.results_dir)
         
         try:
@@ -368,20 +483,26 @@ class EvolutionRunner:
         # REPAIR LOGIC
         if not correct and job.retry_count < self.evo_config.max_repair_attempts:
             logger.info(f"Job failed (Attempt {job.retry_count}). Attempting Repair...")
-            # We try to fix the implementation using previous errors
             try:
                 genome = SecondOrderGenome.from_yaml(job.genome_yaml)
-                # Fix: implement again with error context
-                # "Parent Code" is the failed code we just wrote? Or the original parent?
-                # Usually fix is diff from current failed code.
+                
+                # Use passed artifact_dir?
                 repaired_code = self.implementation_agent.implement(
-                    genome, 
-                    parent_code=code, # Diff from the broken code
-                    previous_errors=stderr_log
+                    genome=genome, 
+                    parent_code=code, 
+                    previous_errors=stderr_log,
+                    component="All", # Repair usually needs global context or we assume component?
+                    # If structure is broken, maybe All. If just invalid syntax in region, component?
+                    # Safest is All for repair to fix imports etc.
+                    artifact_dir=job.job_dir,
+                    eval_script_content=self.eval_script_content
                 )
                 
-                # Submit new job (same generation, increment retry)
-                new_fname = job.exec_fname.replace(".py", f"_retry{job.retry_count+1}.py")
+                # Overwrite main.py? User said "replace also the retry_1 once you write retry_2".
+                # Actually, if we overwrite `main.py`, we lose the history of failed attempts if we don't save them.
+                # But user said "Remove the id... ensure to replace also the retry_1".
+                # Implies keeping one main file.
+                new_fname = job.exec_fname # main.py
                 with open(new_fname, "w", encoding="utf-8") as f:
                     f.write(repaired_code)
                     
@@ -398,9 +519,10 @@ class EvolutionRunner:
                     top_k_insp_ids=job.top_k_insp_ids,
                     meta_patch_data=job.meta_patch_data,
                     retry_count=job.retry_count + 1,
-                    genome_yaml=job.genome_yaml
+                    genome_yaml=job.genome_yaml,
+                    job_dir=job.job_dir
                 ))
-                return # Job re-queued, don't save yet
+                return 
             except Exception as e:
                 logger.error(f"Repair failed: {e}")
                 # Fall through to save as failed
@@ -408,6 +530,7 @@ class EvolutionRunner:
         # Reflection (if correct or final failure)
         genome = SecondOrderGenome.from_yaml(job.genome_yaml)
         if results and results.get("metrics"):
+             # Optional: Save reflection log
              genome = self.reflection_writer.reflect(genome, results.get("metrics", {}).get("public", {}))
         
         self._save_result_to_db(results, rtime, code, genome, job.parent_id, job.generation)
