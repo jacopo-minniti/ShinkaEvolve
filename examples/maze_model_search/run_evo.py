@@ -73,7 +73,7 @@ evo_config = EvolutionConfig(
     llm_models=["Qwen/Qwen3-30B-A3B-Thinking-2507"],
     llm_kwargs=dict(
         temperatures=[0.7],
-        max_tokens=20000,
+        max_tokens=16000,
     ),
     results_dir="results/maze_qwen3-30B-bias",
     max_params=50_000,

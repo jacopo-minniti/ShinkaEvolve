@@ -65,6 +65,8 @@ def query_qwen(
     
     try:
         text = response.choices[0].message.content
+        if response.choices[0].finish_reason == "length":
+            logger.warning("Qwen generation truncated due to length limit!")
     except Exception:
         text = ""
     new_msg_history.append({"role": "assistant", "content": text})
