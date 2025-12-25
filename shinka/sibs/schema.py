@@ -1,7 +1,5 @@
-
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
-import yaml
 import json
 
 class BiasRequirement(BaseModel):
@@ -17,15 +15,6 @@ class FirstOrderBiasPlan(BaseModel):
     omega_requirements: List[BiasRequirement] = Field(default_factory=list)
     phi_requirements: List[BiasRequirement] = Field(default_factory=list)
 
-    def to_yaml(self) -> str:
-        # Pydantic dump
-        data = self.model_dump(mode='json')
-        return yaml.dump(data, sort_keys=False)
-    
-    @classmethod
-    def from_yaml(cls, yaml_str: str) -> "FirstOrderBiasPlan":
-        data = yaml.safe_load(yaml_str)
-        return cls.model_validate(data)
 
 class MetricToInvestigate(BaseModel):
     name: str = "metric"
@@ -58,13 +47,3 @@ class SecondOrderGenome(BaseModel):
     high_level_description: str = ""
     fitness: Optional[Dict[str, float]] = None
     learner: LearnerSpec = Field(default_factory=lambda: LearnerSpec())
-
-    def to_yaml(self) -> str:
-        data = self.model_dump(mode='json')
-        return yaml.dump(data, sort_keys=False)
-
-    @classmethod
-    def from_yaml(cls, yaml_str: str) -> "SecondOrderGenome":
-        data = yaml.safe_load(yaml_str)
-        return cls.model_validate(data)
-
