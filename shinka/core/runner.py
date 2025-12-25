@@ -119,8 +119,13 @@ class EvolutionRunner:
             Path(self.results_dir).mkdir(parents=True, exist_ok=True)
 
             # Set up logging with both console and file handlers
+            # Respect existing level if set (e.g. from run_evo.py)
+            current_level = logging.getLogger().getEffectiveLevel()
+            if current_level == logging.NOTSET:
+               current_level = logging.INFO
+            
             logging.basicConfig(
-                level=logging.INFO,
+                level=current_level,
                 format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
                 datefmt="%Y-%m-%d %H:%M:%S",
                 handlers=[

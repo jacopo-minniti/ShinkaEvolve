@@ -67,57 +67,7 @@ Do not include free-form commentary outside the JSON.
 """
 
 
-SECOND_ORDER_INITIALIZER_SYS_PROMPT = """
-You are the SecondOrderInitializer.
 
-Role
-You translate a FirstOrderBiasPlan into an initial SecondOrderGenome. This is the step where abstract bias objectives are mapped into *concrete but still modular design choices*.
-
-Conceptual scope
-Second-order biases define *how* first-order biases are operationalized. They include:
-- Architectural motifs
-- Loss formulations and auxiliary objectives
-- Information flow constraints
-- Parameter sharing strategies
-- Training-time mechanisms that realize the desired inductive bias
-
-You must remain modular and explicit, but not over-engineered. The goal is to create a reasonable initial genome, not an optimized solution.
-
-Inputs
-You will receive:
-- A FirstOrderBiasPlan expressed in YAML
-
-Genome structure
-The SecondOrderGenome must contain the following components:
-
-1. Alpha (Architectural realization)
-   How task-level biases are realized structurally.
-   Examples: recurrence vs. feedforward, attention mechanisms, memory modules, locality constraints.
-
-2. Omega (Objective and optimization realization)
-   How objective-level biases are enforced.
-   Examples: primary loss, auxiliary losses, regularization terms, uncertainty modeling.
-
-3. Phi (Information and representation flow)
-   How data-level and constraint-level biases are handled through representations.
-   Examples: encoding strategies, bottlenecks, normalization choices, state aggregation.
-
-For each component, you must:
-- Explicitly map first-order bias objectives to concrete mechanisms
-- Explain the intended effect of each design choice
-- Keep choices simple and interpretable
-- Avoid unnecessary hyperparameter tuning or exotic tricks
-
-Output format
-Output JSON only.
-The JSON must:
-- Preserve traceability to the original first-order biases
-- Clearly separate Alpha, Omega, and Phi sections
-- Include short rationales for each design choice
-
-Do not modify or reinterpret the original bias objectives.
-Do not include code.
-"""
 
 
 DESIGN_MUTATOR_SYS_PROMPT = """
@@ -488,7 +438,10 @@ class DesignMutator:
     def _apply_diff(self, original_text: str, diff_text: str) -> str:
         # Simple regex based patch application
         # This mirrors shinka logic simplified
-        pattern = re.compile(r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE", re.DOTALL)
+        pattern = re.compile(
+            r"(?:<DIFF>)?\s*<{7}\s*SEARCH\s*\n(.*?)\n\s*={7}\s*\n(.*?)\n\s*>{7}(?:\s*REPLACE)?\s*(?:</DIFF>)?",
+            re.DOTALL,
+        )
         matches = pattern.findall(diff_text)
         
         patched_text = original_text
@@ -520,6 +473,9 @@ Conceptual scope
 - If Component is OMEGA (Optimizer):
     - You are seeing the OMEGA region (compute_optimizer).
     - Modify optimizer configuration (e.g. Adam vs SGD, learning rates).
+- If Component is All:
+    - You are seeing the full file.
+    - Perform all of the above (Alpha, Phi, Omega) based on the genome and update the templated logic.
 
 Inputs
 You will receive:
@@ -604,6 +560,7 @@ class ImplementationAgent:
         response = self.llm.query(msg=user_msg, system_msg=formatted_sys_msg)
         
         if response and response.content:
+            logger.debug(f"ImplementationAgent Raw Response ({component}):\n{response.content}")
             # Apply diff to the CONTEXT (partial code)
             patched_context = self._apply_diff(code_context, response.content)
             
@@ -618,7 +575,7 @@ class ImplementationAgent:
         # Matches: <DIFF> ... <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE ... </DIFF>
         # or just the git-markers if the model forgets validity of tags
         pattern = re.compile(
-            r"(?:<DIFF>)?\s*<{7}\s*SEARCH\s*\n(.*?)\n\s*={7}\s*\n(.*?)\n\s*>{7}\s*REPLACE\s*(?:</DIFF>)?",
+            r"(?:<DIFF>)?\s*<{7}\s*SEARCH\s*\n(.*?)\n\s*={7}\s*\n(.*?)\n\s*>{7}(?:\s*REPLACE)?\s*(?:</DIFF>)?",
             re.DOTALL,
         )
         matches = pattern.findall(diff_text)
