@@ -28,7 +28,7 @@ from shinka.sibs.schema import SecondOrderGenome
 
 FOLDER_PREFIX = "gen"
 
-# REGION_ALPHA_START
+MINIMAL_TEMPLATE_CODE = """# REGION_ALPHA_START
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -56,6 +56,7 @@ class EvolvedModel(nn.Module):
     def compute_optimizer(self):
         return torch.optim.Adam(self.parameters(), lr=1e-3)
 # REGION_OMEGA_END
+"""
 
 @dataclass
 class EvolutionConfig:
