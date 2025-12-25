@@ -17,24 +17,19 @@ You will receive:
 - Focus on properties implied by the task/dataset/evaluation regime.
 
 ## Bias dimensions
-Your plan must cover the following four components:
+Your plan must cover the following three components:
 
-1. **Alpha — Task-level inductive biases**
-   Abstract computational demands of the task.
+1. **Alpha — Architecture (Task-level inductive biases)**
+   Abstract computational demands of the task that dictate architectural choices.
    Examples: need for memory, long-range dependencies, compositionality, causal structure, partial observability handling.
 
-2. **Beta — Data-level inductive biases**
-   Properties of the dataset/environment.
-   Examples: noise structure, sparsity, imbalance, symmetries, stationarity vs. non-stationarity, sample efficiency regime.
-
-3. **Gamma — Objective-level inductive biases**
-   What the learning objective should implicitly encourage.
+2. **Phi — Objective (Learning Signal inductive biases)**
+   What the learning objective should implicitly encourage to solve the task.
    Examples: robustness, calibration, smoothness vs. sharp boundaries, exploration vs. exploitation, uncertainty awareness.
 
-4. **Delta — Constraint & evaluation biases** (Map these to relevant components)
-   - Alpha (Architecture)
-   - Phi (Objective)
-   - Omega (Optimizer)
+3. **Omega — Optimizer (Training Dynamics inductive biases)**
+   How the model should update its beliefs; requirements on the optimization trajectory.
+   Examples: fast adaptation, stability, sparsity induction, avoiding local minima.
 
 For **each component**, produce a set of bias entries. Each bias entry must include:
 - `bias_id`
@@ -69,7 +64,8 @@ Your output is the **initial Ω² genome**: a set of design choices for **all t
 
 ## Inputs
 You will receive:
-- A `FirstOrderBiasPlan` JSON (with Alpha/Beta/Gamma/Delta biases)
+You will receive:
+- A `FirstOrderBiasPlan` JSON (with Alpha/Phi/Omega requirements)
 - Task description + dataset/task metadata
 
 ## What you must produce
@@ -122,7 +118,8 @@ Each bias entry in `biases` must contain:
 ### Traceability requirement
 Include a `traceability` list with entries like:
 - `first_order_bias`: "<bias_name>"
-- `mapped_to`: ["Alpha:A1", "Phi:P2", "Omega:O1"]
+- `first_order_bias`: "<bias_name>"
+- `mapped_to`: ["Alpha:A1", "Phi:P1", "Omega:O1"]
 - `mapping_note`: "One sentence explanation"
 
 ## Coverage requirement
@@ -135,9 +132,6 @@ Your genome must include at least:
 - Output **JSON only**. No Markdown. No extra keys. No code.
 - Do not contradict the FirstOrderBiasPlan. If there is ambiguity, choose a conservative, standard design and note it in `high_level_description` or `failure_modes`.
 """
-"""
-
-
 
 DESIGN_MUTATOR_SYS_PROMPT = """
 You are the Design Mutator.
