@@ -255,6 +255,7 @@ class FirstOrderPlanner:
 
     def plan(self, island_id: int, task_description: str, dataset_type: str) -> FirstOrderBiasPlan:
         user_msg = f"Task Description: {task_description}\nDataset Type: {dataset_type}\nIsland ID: {island_id}\n\nGenerate a FirstOrderBiasPlan in JSON format."
+        
         response = self.llm.query(
             msg=user_msg, 
             system_msg=FIRST_ORDER_PLANNER_SYS_PROMPT,
@@ -265,41 +266,34 @@ class FirstOrderPlanner:
             logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
             
             # Use Pydantic's validation directly on the content string (it should be valid JSON)
+            content = _clean_json_content(response.content) # Reusing cleaner function name, acts as generic cleaner
+            if "```json" in content:
+                content = content.replace("```json", "").replace("```", "")
+            elif "```" in content:
+                content = content.replace("```", "")
+            content = content.strip()
+            
             try:
-                # Basic cleaning just in case (e.g. ```json blocks)
-                content = _clean_json_content(response.content) # Reusing cleaner function name, acts as generic cleaner
-                if "```json" in content:
-                    content = content.replace("```json", "").replace("```", "")
-                elif "```" in content:
-                    content = content.replace("```", "")
-                content = content.strip()
-                
                 return FirstOrderBiasPlan.model_validate_json(content)
             except Exception as e:
                 logger.warning(f"Failed to parse FirstOrderBiasPlan JSON: {e}")
-                logger.debug(f"Problematic JSON Content:\n{response.content}")
-                # Fallback: try standard json load then validate?
-                # model_validate_json does that.
                 
-                # Extreme fallback: try to find the start/end of JSON object
+                # Attempt repair
+                repaired_content = _repair_json(content)
                 try:
-                    import json
-                    start = content.find("{")
-                    end = content.rfind("}") + 1
-                    if start != -1 and end != -1:
-                        json_str = content[start:end]
-                        return FirstOrderBiasPlan.model_validate_json(json_str)
+                    logger.info("Attempting to repair JSON...")
+                    return FirstOrderBiasPlan.model_validate_json(repaired_content)
                 except Exception as inner_e:
-                     logger.error(f"Extreme fallback failed: {inner_e}")
+                    logger.error(f"Repair failed: {inner_e}")
+                    logger.debug(f"Problematic JSON Content:\n{content}")
 
         raise ValueError("Failed to generate FirstOrderBiasPlan")
 
 class SecondOrderInitializer:
-    def __init__(self, llm_client: LLMClient):
+    def __init__(selfself, llm_client: LLMClient):
         self.llm = llm_client
 
     def initialize(self, first_order_plan: FirstOrderBiasPlan, task_description: str) -> SecondOrderGenome:
-        # Note: first_order_plan.to_yaml() now essentially returns JSON via our mixin, or we can use model_dump_json explicitly
         user_msg = f"Task Description: {task_description}\nFirst Order Plan:\n{first_order_plan.model_dump_json(indent=2)}\n\nGenerate an initial SecondOrderGenome in JSON format."
         
         response = self.llm.query(
@@ -310,26 +304,27 @@ class SecondOrderInitializer:
         
         if response and response.content:
             logger.debug(f"SecondOrderInitializer Raw Response:\n{response.content}")
+            
+            content = _clean_json_content(response.content)
+            if "```json" in content:
+                content = content.replace("```json", "").replace("```", "")
+            elif "```" in content:
+                content = content.replace("```", "")
+            content = content.strip()
+            
             try:
-                content = _clean_json_content(response.content)
-                if "```json" in content:
-                    content = content.replace("```json", "").replace("```", "")
-                elif "```" in content:
-                    content = content.replace("```", "")
-                content = content.strip()
-                
                 return SecondOrderGenome.model_validate_json(content)
             except Exception as e:
                 logger.warning(f"Failed to parse SecondOrderGenome JSON: {e}")
-                logger.debug(f"Problematic JSON Content:\n{response.content}")
+                
+                # Attempt repair
+                repaired_content = _repair_json(content)
                 try:
-                    start = content.find("{")
-                    end = content.rfind("}") + 1
-                    if start != -1 and end != -1:
-                        json_str = content[start:end]
-                        return SecondOrderGenome.model_validate_json(json_str)
+                    logger.info(f"Attempting to repair JSON... (Appended {len(repaired_content) - len(content)} chars)")
+                    return SecondOrderGenome.model_validate_json(repaired_content)
                 except Exception as inner_e:
-                     logger.error(f"Extreme fallback failed: {inner_e}")
+                    logger.error(f"Repair failed: {inner_e}")
+                    logger.debug(f"Problematic JSON Content:\n{content}")
                      
         raise ValueError("Failed to generate SecondOrderGenome")
 
@@ -612,6 +607,7 @@ class ReflectionWriter:
         
         Update the 'reflection' field for biases.
         """
+        
         response = self.llm.query(
             msg=user_msg, 
             system_msg=REFLECTION_WRITER_SYS_PROMPT,
@@ -620,24 +616,25 @@ class ReflectionWriter:
         
         if response and response.content:
              logger.debug(f"ReflectionWriter Raw Response:\n{response.content}")
+             content = _clean_json_content(response.content)
+             if "```json" in content:
+                 content = content.replace("```json", "").replace("```", "")
+             elif "```" in content:
+                 content = content.replace("```", "")
+             content = content.strip()
+             
              try:
-                 content = _clean_json_content(response.content)
-                 if "```json" in content:
-                     content = content.replace("```json", "").replace("```", "")
-                 elif "```" in content:
-                     content = content.replace("```", "")
-                 content = content.strip()
-                 
                  return SecondOrderGenome.model_validate_json(content)
              except Exception as e:
                  logger.warning(f"Failed to parse reflected genome JSON: {e}")
+                 
+                 # Attempt repair
+                 repaired_content = _repair_json(content)
                  try:
-                    start = content.find("{")
-                    end = content.rfind("}") + 1
-                    if start != -1 and end != -1:
-                        json_str = content[start:end]
-                        return SecondOrderGenome.model_validate_json(json_str)
+                     logger.info("Attempting to repair JSON...")
+                     return SecondOrderGenome.model_validate_json(repaired_content)
                  except Exception as inner_e:
-                        logger.error(f"Extreme fallback failed: {inner_e}")
+                     logger.error(f"Repair failed: {inner_e}")
+                     logger.debug(f"Problematic JSON Content:\n{content}")
                         
         raise ValueError("Failed to reflect on genome")
