@@ -281,7 +281,7 @@ class ReflectionWriter:
         
         if response and response.content:
              logger.debug(f"ReflectionWriter Raw Response:\n{response.content}")
-             content = _clean_json_content(response.content)
+             content = response.content
              if "```json" in content:
                  content = content.replace("```json", "").replace("```", "")
              elif "```" in content:

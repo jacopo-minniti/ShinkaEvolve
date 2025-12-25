@@ -144,6 +144,15 @@ class EvolutionRunner:
                 force=True
             )
 
+        # Inject constraints into JobConfig for evaluate.py
+        if self.evo_config.max_params:
+            self.job_config.extra_cmd_args["max_params"] = self.evo_config.max_params
+        if self.evo_config.max_train_steps:
+             self.job_config.extra_cmd_args["max_train_steps"] = self.evo_config.max_train_steps
+
+        # Job counter per generation
+        self.generation_job_counters = {} # gen -> int
+
         # Initialize LLM Client
         from shinka.llm.llm import LLMClient
         self.llm = LLMClient(
@@ -298,8 +307,12 @@ class EvolutionRunner:
             
             # 2. Implement (Diff from Template)
             # Create a separate folder for this job
-            job_uid = uuid.uuid4().hex[:6]
-            job_dir = f"{gen_dir}/job_{job_uid}"
+            if current_gen not in self.generation_job_counters:
+                self.generation_job_counters[current_gen] = 0
+            job_idx = self.generation_job_counters[current_gen]
+            self.generation_job_counters[current_gen] += 1
+            
+            job_dir = f"{gen_dir}/job_{job_idx}"
             Path(job_dir).mkdir(parents=True, exist_ok=True)
             
             # Save genome
@@ -408,8 +421,12 @@ class EvolutionRunner:
                 parent_code = parent_prog.code
                 
                 # Setup Job Directory
-                job_uid = uuid.uuid4().hex[:6]
-                job_dir = f"{gen_dir}/job_{job_uid}"
+                if current_gen not in self.generation_job_counters:
+                    self.generation_job_counters[current_gen] = 0
+                job_idx = self.generation_job_counters[current_gen]
+                self.generation_job_counters[current_gen] += 1
+                
+                job_dir = f"{gen_dir}/job_{job_idx}"
                 Path(job_dir).mkdir(parents=True, exist_ok=True)
                 
                 # Save Genome
@@ -502,16 +519,30 @@ class EvolutionRunner:
                 # Actually, if we overwrite `main.py`, we lose the history of failed attempts if we don't save them.
                 # But user said "Remove the id... ensure to replace also the retry_1".
                 # Implies keeping one main file.
-                new_fname = job.exec_fname # main.py
+                # Create NEW job directory for repair attempt
+                # This ensures history is preserved: job_0 (fail) -> job_1 (repair 1) -> ...
+                current_gen = job.generation
+                if current_gen not in self.generation_job_counters:
+                    self.generation_job_counters[current_gen] = 0
+                job_idx = self.generation_job_counters[current_gen]
+                self.generation_job_counters[current_gen] += 1
+                
+                # We need to know where the gen folder is. job.job_dir is a path.
+                # Usually job.job_dir is ".../gen_X/job_Y". So parent is gen dir.
+                gen_dir = Path(job.job_dir).parent
+                new_job_dir = str(gen_dir / f"job_{job_idx}")
+                Path(new_job_dir).mkdir(parents=True, exist_ok=True)
+
+                new_fname = f"{new_job_dir}/main.py"
                 with open(new_fname, "w", encoding="utf-8") as f:
                     f.write(repaired_code)
                     
-                new_job_id = self.scheduler.submit_async(new_fname, job.results_dir)
+                new_job_id = self.scheduler.submit_async(new_fname, new_job_dir)
                 
                 self.running_jobs.append(RunningJob(
                     job_id=new_job_id,
                     exec_fname=new_fname,
-                    results_dir=job.results_dir,
+                    results_dir=new_job_dir,
                     start_time=time.time(),
                     generation=job.generation,
                     parent_id=job.parent_id,
@@ -520,7 +551,7 @@ class EvolutionRunner:
                     meta_patch_data=job.meta_patch_data,
                     retry_count=job.retry_count + 1,
                     genome_yaml=job.genome_yaml,
-                    job_dir=job.job_dir
+                    job_dir=new_job_dir
                 ))
                 return 
             except Exception as e:

@@ -137,42 +137,45 @@ DESIGN_MUTATOR_SYS_PROMPT = """
 You are the Design Mutator.
 
 Role
-You perform targeted mutations on an existing SecondOrderGenome. Your task is to explore the design space while preserving coherence with the original bias objectives.
+You perform targeted mutations on an existing SecondOrderGenome. Your task is to explore the design space by proposing specific changes to the JSON structure of the genome.
 
 Conceptual scope
 A mutation is a *local, intentional change* to one component of the genome:
-- Alpha: architectural changes
-- Omega: objective or optimization changes
-- Phi: representation or information-flow changes
+- Alpha (Architecture): Structural changes, layer types, connectivity, capacity.
+- Phi (Objective): Loss functions, auxiliary objectives, metric focus.
+- Omega (Optimizer): Optimization algorithms, learning rates, schedules, gradient handling.
 
 Mutations should be:
-- Minimal but meaningful
-- Aligned with the stated bias objectives
-- Easy to attribute during evaluation and reflection
+- Minimal but meaningful (avoid changing everything at once).
+- Aligned with the FIRST ORDER BIAS INTENT (traceability).
+- Easy to attribute during evaluation.
 
 Inputs
 You will receive:
-- A SecondOrderGenome in YAML
-- An instruction specifying which component to mutate (Alpha, Omega, or Phi)
-- Optionally, a motivation for the mutation (e.g. performance issue, instability, underfitting)
+- A Parent Genome (BaseSecondOrderGenome) in JSON format.
+- An instruction specifying which component to mutate (Alpha, Omega, or Phi).
+- Optionally, inspiration genomes or a motivation for the mutation.
 
 Rules
-- Modify only the requested component
-- Do not silently change other sections
-- Preserve YAML validity
-- Ensure the new design still implements the original first-order bias intent
+- Modify ONLY the requested component.
+- Do NOT silently change other sections.
+- Ensure the new design is valid JSON when patched.
+- Ensure the new design still implements the original first-order bias intent.
 
 Edit format
-You must use SEARCH/REPLACE blocks exactly as specified.
+You must use SEARCH/REPLACE blocks to modify the JSON string.
+Matches must be exact (including whitespace/indentation).
 
 Format:
 <<<<<<< SEARCH
-# Exact YAML content to replace
+      "design_choice": "Old Choice",
+      "rationale": "Old Rationale"
 =======
-# New YAML content
+      "design_choice": "New Mutated Choice",
+      "rationale": "New Rationale because..."
 >>>>>>> REPLACE
 
-Do not include explanations outside the YAML edits.
+Do not include explanations outside the blocks.
 Do not output anything other than SEARCH/REPLACE blocks.
 """
 
@@ -191,13 +194,14 @@ Conceptual scope
     - Modify `__init__` to define layers/modules.
     - Modify `forward` to change the main data flow through these layers.
     - Do NOT touch `compute_loss` or `compute_metrics`.
-- If Component is OMEGA (Objective/Optimization):
-    - Modify `compute_loss` to implement the loss function.
-    - Modify `compute_metrics` to track relevant metrics.
-    - Do NOT touch `__init__` or `forward` (unless adding simple auxiliary heads strictly needed for the loss).
-- If Component is PHI (Information Flow):
-    - Modify `forward` to change how data is processed/shaped (e.g. normalization, reshape).
-    - Modify `__init__` only for normalization/embedding layers.
+- If Component is PHI (Objective):
+    - Modify `compute_loss` to implement the loss function (this drives the gradient).
+    - Modify `compute_metrics` to track relevant metrics for interpretability and monitoring.
+    - **CRITICAL**: `compute_metrics` must **NEVER** compute or ask for the loss (it is already tracked automatically). It should focus on other properties (accuracy, sparsity, entropy, etc.).
+    - Do NOT touch `__init__` or `forward`.
+- If Component is OMEGA (Optimizer):
+    - Modify `compute_optimizer` to define the optimization strategy.
+    - Do NOT touch `__init__`, `forward`, `compute_loss` or `compute_metrics`.
 
 Inputs
 You will receive:
