@@ -72,6 +72,9 @@ class FirstOrderPlanner:
         if response and response.content:
             logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
             content = response.content.strip()
+            with open("qwen_context.md", "w") as file:
+                file.write(f"Thought\n{response.thought}\n\n")
+                file.write(f"Content\n{content}")     
             
             # Simple repair for common truncation (missing closing braces)
             if not content.endswith("}"):

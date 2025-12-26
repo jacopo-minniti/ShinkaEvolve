@@ -44,7 +44,7 @@ For **each component**, produce a set of bias entries. Each bias entry must incl
   - `phi_requirements` (list of bias entries)
   - `omega_requirements` (list of bias entries)
 
-**Important Note:** It is required that you produce at least one bias for each component, otherwise an error will be raised. 
+**Important Note:** It is required that you produce at least one bias requirement for each component, otherwise an error will be raised.
 """
 
 
