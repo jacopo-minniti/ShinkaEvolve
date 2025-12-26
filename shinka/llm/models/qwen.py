@@ -91,23 +91,8 @@ def query_qwen(
     new_msg_history.append({"role": "assistant", "content": text})
 
     message = response.choices[0].message
-    raw_content = getattr(message, "content", "") or ""
-    thought = getattr(message, "reasoning", None) or getattr(
-        message, "reasoning_content", None
-    )
-    content = raw_content
-    if thought:
-        thought = str(thought).strip()
-        tag_thought, tag_content = _split_think_tags(raw_content)
-        if tag_content:
-            content = tag_content
-        if not thought and tag_thought:
-            thought = tag_thought
-    else:
-        tag_thought, tag_content = _split_think_tags(raw_content)
-        thought = tag_thought
-        content = tag_content
-
+    thought, content = message.reasoning, message.content
+    
     # Qwen Local Usage
     # Pricing is 0 for local
     input_tokens = response.usage.prompt_tokens if response.usage else 0
