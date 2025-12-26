@@ -69,6 +69,11 @@ def query_qwen(
     message = response.choices[0].message
     thought, content = message.reasoning, message.content
     new_msg_history.append({"role": "assistant", "content": content})
+
+    if thought is None:
+        thought, content = content.split("</think>")
+        content = content.replace("</think>", "").strip()
+        thought = thought.replace("</think>", "").strip()
     
     # Qwen Local Usage
     # Pricing is 0 for local
