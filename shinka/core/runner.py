@@ -278,7 +278,7 @@ class EvolutionRunner:
         if num_islands < 1: num_islands = 1
         
         task_desc = self.evo_config.task_sys_msg or "Solve the task."
-        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.train_steps}"
+        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Epochs={self.evo_config.training_epochs}"
 
         # In Gen 0, we might want multiple individuals per island if population size > num_islands
         # For now, let's assume 1 per island as per original code logic, or maybe more?
