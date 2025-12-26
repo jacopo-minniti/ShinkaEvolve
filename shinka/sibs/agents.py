@@ -195,12 +195,55 @@ class DesignMutator:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    def mutate(self, parent_genome: SecondOrderGenome, component_to_mutate: str, 
-               inspirations: List[SecondOrderGenome], first_order_plan: Optional[str] = None) -> SecondOrderGenome:
+    def mutate(
+        self,
+        parent_genome: SecondOrderGenome,
+        component_to_mutate: str,
+        archive_inspirations: List[Program],
+        top_k_inspirations: List[Program],
+        first_order_plan: Optional[str] = None,
+        artifact_dir: Optional[str] = None,
+    ) -> SecondOrderGenome:
         
         # Use JSON for consistency with other agents, preserving logic
         # Use BaseSecondOrderGenome for inspirations to hide system fields
-        insp_str = "\n".join([f"Inspiration Genome:\n{BaseSecondOrderGenome(**g.model_dump()).model_dump_json(indent=2)}" for g in inspirations])
+        def _format_inspirations(label: str, inspirations: List[Program]) -> str:
+            if not inspirations:
+                return f"{label}: none"
+            blocks = []
+            for prog in inspirations:
+                if not prog.genome:
+                    continue
+                try:
+                    genome = BaseSecondOrderGenome.model_validate_json(prog.genome)
+                    genome_json = genome.model_dump_json(indent=2)
+                except Exception:
+                    genome_json = prog.genome
+                blocks.append(
+                    "\n".join(
+                        [
+                            f"- id: {prog.id}",
+                            f"  generation: {prog.generation}",
+                            f"  island: {prog.island_idx}",
+                            f"  combined_score: {prog.combined_score}",
+                            f"  public_metrics: {prog.public_metrics}",
+                            "  genome:",
+                            genome_json,
+                        ]
+                    )
+                )
+            return f"{label}:\n" + "\n\n".join(blocks) if blocks else f"{label}: none"
+
+        insp_str = "\n\n".join(
+            [
+                _format_inspirations(
+                    "Archive inspirations (random/novelty)", archive_inspirations
+                ),
+                _format_inspirations(
+                    "Top-k inspirations (highest fitness)", top_k_inspirations
+                ),
+            ]
+        )
         
         base_parent = BaseSecondOrderGenome(**parent_genome.model_dump())
         
@@ -220,7 +263,23 @@ class DesignMutator:
         
         Please provide a mutated version of the genome using SEARCH/REPLACE blocks.
         """
-        response = self.llm.query(msg=user_msg, system_msg=DESIGN_MUTATOR_SYS_PROMPT)
+        response = None
+        try:
+            response = self.llm.query(msg=user_msg, system_msg=DESIGN_MUTATOR_SYS_PROMPT)
+        finally:
+            if artifact_dir:
+                try:
+                    Path(artifact_dir).mkdir(parents=True, exist_ok=True)
+                    log_path = Path(artifact_dir) / "mutation_log.md"
+                    with open(log_path, "w", encoding="utf-8") as f:
+                        f.write(
+                            "# Mutation Log\n\n"
+                            f"## System Message\n{DESIGN_MUTATOR_SYS_PROMPT}\n\n"
+                            f"## User Message\n{user_msg}\n\n"
+                            f"## Response\n{response.content if response else 'NO RESPONSE'}\n"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to save mutation log: {e}")
         if response and response.content:
              # Apply the diff to the partial JSON string
              # The existing diff logic works on text, so it handles JSON strings fine
@@ -332,22 +391,32 @@ class ImplementationAgent:
         else:
             if not previous_errors:
                 user_msg += "\nModify the code region to match the new genome."
+
+        if component == "Phi":
+            user_msg += "\n\nReminder: compute_metrics must not compute or return loss."
         
         # Add instruction if any errors present
         if previous_errors or (historical_errors and len(historical_errors) > 0):
              user_msg += "\n\nCRITICAL: You MUST analyze the above errors. If they relate to your current task, ensure your implementation fixes or avoids them."
 
         formatted_sys_msg = IMPLEMENTATION_AGENT_SYS_PROMPT.format(component=component)
-        response = self.llm.query(msg=user_msg, system_msg=formatted_sys_msg)
-        
-        # Save interaction log
-        if artifact_dir:
-             try:
-                 log_path = Path(artifact_dir) / "implementation_log.md"
-                 with open(log_path, "w", encoding="utf-8") as f:
-                     f.write(f"# Implementation Log\n\n## System Message\n{formatted_sys_msg}\n\n## User Message\n{user_msg}\n\n## Response\n{response.content if response else 'NO RESPONSE'}\n")
-             except Exception as e:
-                 logger.warning(f"Failed to save implementation log: {e}")
+        response = None
+        try:
+            response = self.llm.query(msg=user_msg, system_msg=formatted_sys_msg)
+        finally:
+            if artifact_dir:
+                try:
+                    Path(artifact_dir).mkdir(parents=True, exist_ok=True)
+                    log_path = Path(artifact_dir) / "implementation_log.md"
+                    with open(log_path, "w", encoding="utf-8") as f:
+                        f.write(
+                            "# Implementation Log\n\n"
+                            f"## System Message\n{formatted_sys_msg}\n\n"
+                            f"## User Message\n{user_msg}\n\n"
+                            f"## Response\n{response.content if response else 'NO RESPONSE'}\n"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to save implementation log: {e}")
 
         if response and response.content:
             logger.debug(f"ImplementationAgent Raw Response ({component}):\n{response.content}")

@@ -49,7 +49,7 @@ class EvolvedModel(nn.Module):
         return torch.tensor(0.0, requires_grad=True)
 
     def compute_metrics(self, batch, outputs):
-        return {"loss": 0.0, "test_accuracy": 0.0}
+        return {"test_accuracy": 0.0}
 # REGION_PHI_END
 
 # REGION_OMEGA_START
@@ -396,8 +396,10 @@ class EvolutionRunner:
                     new_genome = self.design_mutator.mutate(
                         parent_genome, 
                         comp, 
-                        inspirations,
-                        first_order_plan=fo_plan_str
+                        archive_progs,
+                        top_k_progs,
+                        first_order_plan=fo_plan_str,
+                        artifact_dir=job_dir
                     )
                     patch_type = f"mutation_{comp}"
                     target_comp = comp
