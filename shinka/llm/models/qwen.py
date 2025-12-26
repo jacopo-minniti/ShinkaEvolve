@@ -6,21 +6,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def _split_think_tags(text: str) -> tuple[str, str]:
-    if not text:
-        return "", ""
-    match = re.search(r"<think>(.*?)</think>", text, re.DOTALL | re.IGNORECASE)
-    if not match:
-        match = re.search(
-            r"<analysis>(.*?)</analysis>", text, re.DOTALL | re.IGNORECASE
-        )
-    if not match:
-        return "", text.strip()
-    thought = match.group(1).strip()
-    content = (text[: match.start()] + text[match.end() :]).strip()
-    return thought, content
-
-
 def backoff_handler(details):
     exc = details.get("exception")
     if exc:
@@ -81,17 +66,9 @@ def query_qwen(
     args_dict["extra_body"] = extra_body
     
     response = client.chat.completions.create(**args_dict)
-    
-    try:
-        text = response.choices[0].message.content
-        if response.choices[0].finish_reason == "length":
-            logger.warning("Qwen generation truncated due to length limit!")
-    except Exception:
-        text = ""
-    new_msg_history.append({"role": "assistant", "content": text})
-
     message = response.choices[0].message
     thought, content = message.reasoning, message.content
+    new_msg_history.append({"role": "assistant", "content": content})
     
     # Qwen Local Usage
     # Pricing is 0 for local
@@ -110,7 +87,7 @@ def query_qwen(
         cost=0.0,
         input_cost=0.0,
         output_cost=0.0,
-        thought=thought or "",
+        thought=thought,
         model_posteriors=model_posteriors,
     )
     return result
