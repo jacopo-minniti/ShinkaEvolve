@@ -16,6 +16,46 @@ from shinka.sibs.prompts import (
 
 logger = logging.getLogger(__name__)
 
+def _assign_bias_ids(spec: BaseSecondOrderGenome) -> None:
+    components = [
+        ("Alpha", "alpha_a"),
+        ("Phi", "phi_p"),
+        ("Omega", "omega_o"),
+    ]
+    for attr, prefix in components:
+        comp = getattr(spec.learner, attr, None)
+        if not comp or not comp.biases:
+            continue
+        for idx, bias in enumerate(comp.biases, start=1):
+            bias.bias_id = f"{prefix}{idx}"
+
+def _merge_reflections(
+    original: BaseSecondOrderGenome, updated: BaseSecondOrderGenome
+) -> BaseSecondOrderGenome:
+    components = ["Alpha", "Phi", "Omega"]
+    for attr in components:
+        orig_comp = getattr(original.learner, attr, None)
+        updated_comp = getattr(updated.learner, attr, None)
+        if not orig_comp or not updated_comp:
+            continue
+        for idx, orig_bias in enumerate(orig_comp.biases):
+            if idx < len(updated_comp.biases):
+                orig_bias.reflection = updated_comp.biases[idx].reflection
+    return original
+
+def _assign_first_order_ids(spec: FirstOrderBiasSpec) -> None:
+    components = [
+        ("alpha_requirements", "alpha_r"),
+        ("phi_requirements", "phi_r"),
+        ("omega_requirements", "omega_r"),
+    ]
+    for attr, prefix in components:
+        reqs = getattr(spec, attr, None)
+        if not reqs:
+            continue
+        for idx, req in enumerate(reqs, start=1):
+            req.id = f"{prefix}{idx}"
+
 class FirstOrderPlanner:
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
@@ -65,6 +105,7 @@ class FirstOrderPlanner:
                         # Fallback: Raise original
                         raise e
 
+            _assign_first_order_ids(spec)
             # Enrich with system fields
             return FirstOrderBiasPlan(
                 first_order_version=0.1,
@@ -135,6 +176,7 @@ class SecondOrderInitializer:
                 # But currently no retry loop in agent.
                 # Let's add a default if empty? Or just log.
                 pass
+            _assign_bias_ids(spec)
             # Enrich with system fields
             return SecondOrderGenome(
                 genome_version=0.1,
@@ -190,6 +232,7 @@ class DesignMutator:
              # Reconstruct full genome with parent's system fields
              # Note: Typically mutation might imply a new ID or generation, but that logic might be external.
              # We preserve parent's ID/Island etc. for now as per "enrich after/before based on hard data" logic.
+             _assign_bias_ids(new_spec)
              return SecondOrderGenome(
                  genome_version=parent_genome.genome_version,
                  genome_id=parent_genome.genome_id,
@@ -378,6 +421,8 @@ class ReflectionWriter:
              
              try:
                  new_spec = BaseSecondOrderGenome.model_validate_json(content)
+                 merged_spec = _merge_reflections(base_genome, new_spec)
+                 _assign_bias_ids(merged_spec)
                  # Merge back
                  return SecondOrderGenome(
                     genome_version=genome.genome_version,
@@ -386,7 +431,7 @@ class ReflectionWriter:
                     parent_id=genome.parent_id,
                     generation=genome.generation,
                     fitness=genome.fitness,
-                    **new_spec.model_dump()
+                    **merged_spec.model_dump()
                  )
              except Exception as e:
                  logger.warning(f"Failed to parse reflected genome JSON: {e}")
@@ -396,6 +441,8 @@ class ReflectionWriter:
                  try:
                      logger.info("Attempting to repair JSON...")
                      new_spec = BaseSecondOrderGenome.model_validate_json(repaired_content)
+                     merged_spec = _merge_reflections(base_genome, new_spec)
+                     _assign_bias_ids(merged_spec)
               
                      # Merge back
                      return SecondOrderGenome(
@@ -405,7 +452,7 @@ class ReflectionWriter:
                         parent_id=genome.parent_id,
                         generation=genome.generation,
                         fitness=genome.fitness,
-                        **new_spec.model_dump()
+                        **merged_spec.model_dump()
                      )
                  except Exception as inner_e:
                      logger.error(f"Repair failed: {inner_e}")

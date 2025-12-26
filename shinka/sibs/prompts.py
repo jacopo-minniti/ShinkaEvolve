@@ -29,10 +29,10 @@ Your plan must cover the following three components:
 
 3. **Omega — Optimizer (Training Dynamics inductive biases)**
    How the model should update its beliefs; requirements on the optimization trajectory.
+   This is about training dynamics and optimizer behavior (e.g., fast convergence under limited epochs, stability, smooth updates, resistance to local minima, regularization effects).
    Examples: fast adaptation, stability, sparsity induction, avoiding local minima.
 
 For **each component**, produce a set of bias entries. Each bias entry must include:
-- `bias_id`
 - `property`
 - `why_task_requires_it`
 
@@ -52,87 +52,53 @@ SECOND_ORDER_INITIALIZER_SYS_PROMPT = """
 # You are the SecondOrderInitializer
 
 ## Role
-You translate a **FirstOrderBiasPlan** into an initial **SecondOrderGenome**.
+You translate a **FirstOrderBiasPlan** into an initial **BaseSecondOrderGenome**.
 
-This is the first genome for an island. It must be **complete** (covers all required components), **coherent end-to-end**, and **implementable** by a downstream coding agent — but it must **not** turn into code-in-YAML.
-
-### Key conceptual distinction (use this explicitly)
-- **First-order biases (Ω¹)**: describe *task/dataset requirements* — what properties a successful solution must support.
-  - They do **not** mention specific mechanisms.
-- **Second-order biases (Ω²)**: describe *concrete design choices* that operationalize Ω¹.
-  - They **may** reference mechanism families (e.g., “attention-like global mixing”, “convolutional locality”, “contrastive auxiliary objective”), but must remain at the level of **design intent + measurable effect**, not wiring diagrams or code.
-
-Your output is the **initial Ω² genome**: a set of design choices for **all three components** below.
+This is the first genome for an island. It must be **complete**, **coherent**, and **implementable** by a downstream coding agent — but it must **not** turn into code.
 
 ## Inputs
 You will receive:
-You will receive:
-- A `FirstOrderBiasPlan` JSON (with Alpha/Phi/Omega requirements)
+- A `FirstOrderBiasPlan` JSON (with alpha/phi/omega requirements)
 - Task description + dataset/task metadata
 
-## What you must produce
-A **SecondOrderGenome** JSON with exactly these three components:
-1. **Alpha** — Architecture / model design choices
-2. **Phi** — Objective / loss design choices
-3. **Omega** — Optimizer / training dynamics choices
-
-You must:
-- Map each relevant first-order bias to one or more second-order biases across Alpha/Phi/Omega.
-- Ensure the genome is **complete and internally consistent** (architecture outputs match objective expectations; optimizer fits the training dynamics implied).
-- Keep the initialization **simple and interpretable** (this is a starting point; later generations can specialize).
-- Avoid “exotic tricks” and avoid fine hyperparameter tuning.
-
-### Allowed specificity (important)
-You **may** use mechanism words like: attention, convolution, recurrence, state-space, gating, normalization, auxiliary loss, calibration penalty, etc.
-But you **must not** give implementation-level instructions such as:
-- “insert X block at layer k”
-- tensor shapes, exact module classes, code snippets, import statements
-- exact optimizer hyperparameters beyond high-level family choices (e.g., “AdamW with standard defaults” is fine; precise betas/eps schedules are not)
-
-Think of Ω² as: “what property are we trying to realize?” + “what family of mechanisms likely realizes it?” + “what metric should reflect it?”
-
-## Genome schema (STRICT)
+## What you must produce (STRICT SCHEMA)
 Output JSON only with the following top-level keys:
-- `high_level_description` (1 paragraph describing the whole genome intent)
+- `high_level_description` (string, 1 paragraph describing the overall intent)
 - `learner` (object)
 
-The `learner` object must contain:
-- `Alpha` (object)
-- `Phi` (object)
-- `Omega` (object)
+The `learner` object must contain exactly:
+- `alpha` (object)
+- `phi` (object)
+- `omega` (object)
 
 Each component object must contain:
-- `summary` (short)
+- `summary` (short string)
 - `biases` (list)
 
-Each bias entry in `biases` must contain:
-- `bias_id` (string, unique within component)
-- `derived_from_first_order` (list of first-order bias names or IDs; preserve traceability)
-- `intention` (Because <context from Ω¹/task>, we want <property>)
-- `design_choice` (what you propose, in mechanism-family terms; no code/wiring)
-- `metric_to_investigate`:
+Each bias entry in `biases` must contain ONLY:
+- `acts_on` (string: "alpha" | "phi" | "omega")
+- `intention` (string, why this bias is needed)
+- `metric_to_investigate` (object):
   - `name` (string)
-  - `expectation` ("increase" | "decrease" | "stable")
-  - `rationale` (why this metric reflects the intention)
-- `failure_modes` (list of 2–4 plausible reasons it might not work)
-- `reflection` (null for initializer; later filled after evaluation)
+  - `expectation` ("increase" | "decrease")
+  - `rationale` (string)
+- `reflection` (null for initializer)
+- `content` (string, the actual bias text at mechanism-family level only)
 
-### Traceability requirement
-Include a `traceability` list with entries like:
-- `first_order_bias`: "<bias_name>"
-- `first_order_bias`: "<bias_name>"
-- `mapped_to`: ["Alpha:A1", "Phi:P1", "Omega:O1"]
-- `mapping_note`: "One sentence explanation"
+## Design guidance
+- Map each relevant first-order bias to one or more biases across alpha/phi/omega.
+- Keep the design simple, interpretable, and internally consistent.
+- Avoid implementation-level instructions (no code, no tensor shapes, no exact hyperparameters).
 
 ## Coverage requirement
-Your genome must include at least:
-- **2 biases** in Alpha
-- **1 bias** in Phi (must specify the **loss family** at a high level, e.g., cross-entropy vs BCE vs contrastive)
-- **1 bias** in Omega (must specify **optimizer family** at a high level)
+Include at least:
+- **2 biases** in alpha
+- **1 bias** in phi (must specify the loss family at a high level)
+- **1 bias** in omega (must specify the optimizer family at a high level)
 
 ## Output rules
 - Output **JSON only**. No Markdown. No extra keys. No code.
-- Do not contradict the FirstOrderBiasPlan. If there is ambiguity, choose a conservative, standard design and note it in `high_level_description` or `failure_modes`.
+- Do not contradict the FirstOrderBiasPlan. If there is ambiguity, choose a conservative, standard design and note it in `high_level_description`.
 """
 
 DESIGN_MUTATOR_SYS_PROMPT = """
@@ -263,9 +229,9 @@ For each affected bias:
 You may suggest future mutation directions, but only as reflections, not changes.
 
 Output format
-Output the updated SecondOrderGenome JSON only.
-Add a dedicated reflection field to relevant components.
-Do not remove existing genome content.
+Output the updated BaseSecondOrderGenome JSON only.
+Update only the `reflection` field inside relevant bias entries.
+Do not add new keys or remove existing content.
 Do not include external commentary.
 """
 

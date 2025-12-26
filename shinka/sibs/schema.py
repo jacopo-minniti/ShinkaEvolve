@@ -3,15 +3,15 @@ from pydantic import BaseModel, Field
 import json
 
 class BiasRequirement(BaseModel):
-    id: str
+    id: Optional[str] = None
     property: str
     why_task_requires_it: str
 
 class FirstOrderBiasSpec(BaseModel):
     task_summary: str = ""
-    alpha_requirements: List[BiasRequirement] = Field(default_factory=list)
-    omega_requirements: List[BiasRequirement] = Field(default_factory=list)
-    phi_requirements: List[BiasRequirement] = Field(default_factory=list)
+    alpha_requirements: List[BiasRequirement] = Field(default_factory=list, min_length=1)
+    omega_requirements: List[BiasRequirement] = Field(default_factory=list, min_length=1)
+    phi_requirements: List[BiasRequirement] = Field(default_factory=list, min_length=1)
 
 class FirstOrderBiasPlan(FirstOrderBiasSpec):
     first_order_version: float = 0.1
@@ -24,7 +24,7 @@ class MetricToInvestigate(BaseModel):
     rationale: str = ""
 
 class BiasEntry(BaseModel):
-    bias_id: str
+    bias_id: Optional[str] = None
     acts_on: str # "Alpha", "Omega", "Phi"
     intention: str
     metric_to_investigate: MetricToInvestigate
