@@ -72,6 +72,16 @@ class FirstOrderPlanner:
         if response and response.content:
             logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
             content = response.content.strip()
+            logger.debug(
+                "FirstOrderPlanner response size=%d startswith=%r endswith=%r",
+                len(content),
+                content[:40],
+                content[-40:],
+            )
+            if '"omega_requirements"' not in content:
+                logger.warning(
+                    "FirstOrderPlanner response missing omega_requirements key."
+                )
             
             # Simple repair for common truncation (missing closing braces)
             if not content.endswith("}"):
