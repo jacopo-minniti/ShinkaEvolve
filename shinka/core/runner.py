@@ -75,7 +75,7 @@ class EvolutionConfig:
     max_repair_attempts: int = 2
     # Constraints
     max_params: int = 100_000
-    train_steps: int = 2000
+    training_epochs: int = 3
 
 @dataclass
 class RunningJob:
@@ -147,8 +147,8 @@ class EvolutionRunner:
         # Inject constraints into JobConfig for evaluate.py
         if self.evo_config.max_params:
             self.job_config.extra_cmd_args["max_params"] = self.evo_config.max_params
-        if self.evo_config.train_steps:
-             self.job_config.extra_cmd_args["train_steps"] = self.evo_config.train_steps
+        if self.evo_config.training_epochs:
+             self.job_config.extra_cmd_args["training_epochs"] = self.evo_config.training_epochs
 
         # Job counter per generation
         self.generation_job_counters = {} # gen -> int
@@ -246,7 +246,7 @@ class EvolutionRunner:
         
         task_desc = self.evo_config.task_sys_msg or "Solve the task."
         # Append constraints to task desc
-        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Steps={self.evo_config.train_steps}"
+        task_desc += f"\nConstraints: Max Params={self.evo_config.max_params}, Epochs={self.evo_config.training_epochs}"
         
         dataset_type = "default"
 

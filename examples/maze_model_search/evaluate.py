@@ -90,21 +90,22 @@ def train_model(model, train_data, args, device) -> Dict:
         raise ValueError("Model must implement compute_loss(batch, outputs)")
 
     logger.info(
-        "Training start: total_steps=%d, batch_size=%d, device=%s",
-        args.train_steps,
+        "Training start: epochs=%d, batch_size=%d, device=%s",
+        args.training_epochs,
         args.batch_size,
         device,
     )
     logger.info("Training data: episodes=%d, steps=%d", len(train_data), len(all_steps))
 
-    while current_step < args.train_steps:
+    for epoch in range(args.training_epochs):
+        # Shuffle data each epoch
+        indices = torch.randperm(len(all_steps))
+        
         for i in range(0, len(all_steps), args.batch_size):
-            if current_step >= args.train_steps: break
+            idx_batch = indices[i : i + args.batch_size]
+            if len(idx_batch) < args.batch_size: continue
             
-            indices = random_indices[i : i + args.batch_size]
-            if len(indices) < args.batch_size: continue
-            
-            batch_steps = [all_steps[idx] for idx in indices]
+            batch_steps = [all_steps[idx] for idx in idx_batch]
             
             obs_batch = torch.stack([s['obs'] for s in batch_steps]).to(device)
             action_batch = torch.tensor(
@@ -141,8 +142,8 @@ def train_model(model, train_data, args, device) -> Dict:
 
             if current_step % 100 == 0:
                 avg_loss = total_loss / max(num_batches, 1)
-                logger.info("Training progress: step=%d/%d avg_loss=%.6f",
-                            current_step, args.train_steps, avg_loss)
+                logger.info("Training progress: Epoch %d/%d | Step %d | Avg Loss %.6f",
+                            epoch + 1, args.training_epochs, current_step, avg_loss)
 
     return {"train_loss_final": total_loss / num_batches if num_batches else 0.0}
 
@@ -292,7 +293,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="data/maze_quick")
-    parser.add_argument("--train_steps", type=int, default=2000)
+    parser.add_argument("--training_epochs", type=int, default=3)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--max_params", type=int, default=100_000)
     parser.add_argument("--obs_size", type=int, default=7)

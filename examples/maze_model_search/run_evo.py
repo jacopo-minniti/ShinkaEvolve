@@ -11,11 +11,8 @@ logging.basicConfig(
     force=True
 )
 
-# Configure the job execution environment
-# We point to our new evaluate.py
 job_config = LocalJobConfig(eval_program_path="examples/maze_model_search/evaluate.py")
 
-# Parent selection strategy (can be same as main.py default or simplified)
 parent_config = dict(
     parent_selection_strategy="power_law",
     exploitation_alpha=1.0,
@@ -53,7 +50,7 @@ Constraints:
 - `forward` should return action logits only (no loss, no extra side effects).
 - `compute_loss` must return a scalar `torch.Tensor` just like standard PyTorch losses.
 - Parameter count must stay under the limit (100k).
-- Training budget is fixed and very limited (2k steps). Code efficient, fast-converging architectures.
+- Training budget is fixed (3 Epochs). Code efficient, fast-converging architectures.
 - Be creative with:
     - Experience replay buffers (if you implement them inside the model/loss loop)
     - Memory (RNNs, GRUs, LSTMs) to handle partial observability
@@ -73,11 +70,11 @@ evo_config = EvolutionConfig(
     llm_models=["Qwen/Qwen3-30B-A3B-Thinking-2507"],
     llm_kwargs=dict(
         temperatures=[0.7],
-        max_tokens=16000,
+        max_tokens=20000,
     ),
     results_dir="results/maze_qwen3-30B-bias",
-    max_params=50_000,
-    train_steps=5000,
+    max_params=80_000,
+    training_epochs=5,
 )
 
 if __name__ == "__main__":

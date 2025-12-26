@@ -209,7 +209,7 @@ Inputs
 You will receive:
 - Existing PyTorch code
 - A SecondOrderGenome describing the desired design
-- Optionally, error logs or failing behaviors from previous runs
+- Optionally, error logs or failing behaviors from previous runs. You MUST analyze these errors and fix them in your implementation.
 
 Rules
 - All edits must be done using valid XML-style SEARCH/REPLACE blocks.
