@@ -77,24 +77,27 @@ def query_qwen(
         text = ""
     new_msg_history.append({"role": "assistant", "content": text})
 
-    # Modified parsing for <think> tag instead of <thought>
-    thought_match = re.search(
-        r"<think>(.*?)</think>", response.choices[0].message.content, re.DOTALL
+    message = response.choices[0].message
+    thought = getattr(message, "reasoning", None) or getattr(
+        message, "reasoning_content", None
     )
-
-    thought = thought_match.group(1) if thought_match else ""
+    if thought is None:
+        thought_match = re.search(
+            r"<think>(.*?)</think>", message.content, re.DOTALL
+        )
+        thought = thought_match.group(1) if thought_match else ""
 
     content_match = re.search(
-        r"<think>(.*?)</think>", response.choices[0].message.content, re.DOTALL
+        r"<think>(.*?)</think>", message.content, re.DOTALL
     )
     if content_match:
         # Extract everything before and after the <think> tag as content
         content = (
-            response.choices[0].message.content[: content_match.start()]
-            + response.choices[0].message.content[content_match.end() :]
+            message.content[: content_match.start()]
+            + message.content[content_match.end() :]
         ).strip()
     else:
-        content = response.choices[0].message.content
+        content = message.content
 
     # Qwen Local Usage
     # Pricing is 0 for local
@@ -113,7 +116,7 @@ def query_qwen(
         cost=0.0,
         input_cost=0.0,
         output_cost=0.0,
-        thought=thought,
+        thought=thought or "",
         model_posteriors=model_posteriors,
     )
     return result

@@ -29,12 +29,12 @@ Your plan must cover the following three components:
 
 3. **Omega — Optimizer (Training Dynamics inductive biases)**
    How the model should update its beliefs; requirements on the optimization trajectory.
-   This is about training dynamics and optimizer behavior (e.g., fast convergence under limited epochs, stability, smooth updates, resistance to local minima, regularization effects).
+   This is about training dynamics and optimizer behavior (e.g., fast convergence under limited epochs, stability, smooth updates, resistance to local minima, regularization effects). 
    Examples: fast adaptation, stability, sparsity induction, avoiding local minima.
 
 For **each component**, produce a set of bias entries. Each bias entry must include:
-- `property`
-- `why_task_requires_it`
+- `property` (string)
+- `why_task_requires_it` (string)
 
 ## Output format (STRICT)
 - Output **JSON only** (no Markdown, no commentary).
@@ -44,7 +44,7 @@ For **each component**, produce a set of bias entries. Each bias entry must incl
   - `phi_requirements` (list of bias entries)
   - `omega_requirements` (list of bias entries)
 
-**Note:** It is important that you produce at least one bias for each component.
+**Important Note:** It is required that you produce at least one bias for each component, otherwise an error will be raised. 
 """
 
 
