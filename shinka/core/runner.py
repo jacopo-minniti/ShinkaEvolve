@@ -383,6 +383,15 @@ class EvolutionRunner:
                         fo_plan_str = fo_yaml
 
                 
+                # Setup Job Directory
+                if current_gen not in self.generation_job_counters:
+                    self.generation_job_counters[current_gen] = 0
+                job_idx = self.generation_job_counters[current_gen]
+                self.generation_job_counters[current_gen] += 1
+                
+                job_dir = f"{gen_dir}/job_{job_idx}"
+                Path(job_dir).mkdir(parents=True, exist_ok=True)
+
                 # 2. Mutate (Diff) or Crossover (Swap)
                 target_comp = "All" # Default
                 
@@ -426,14 +435,7 @@ class EvolutionRunner:
                 # 3. Implement (Code Diff)
                 parent_code = parent_prog.code
                 
-                # Setup Job Directory
-                if current_gen not in self.generation_job_counters:
-                    self.generation_job_counters[current_gen] = 0
-                job_idx = self.generation_job_counters[current_gen]
-                self.generation_job_counters[current_gen] += 1
-                
-                job_dir = f"{gen_dir}/job_{job_idx}"
-                Path(job_dir).mkdir(parents=True, exist_ok=True)
+
                 
                 # Save Genome
                 with open(f"{job_dir}/genome.json", "w") as f:
