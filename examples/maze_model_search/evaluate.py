@@ -143,9 +143,6 @@ def train_model(model, train_data, args, device) -> Dict:
                 distance_batch = torch.tensor(
                     [s['distance'] for s in current_steps], dtype=torch.float32, device=device
                 )
-                # Normalize distance to [0, 1] range (approx max path is < 100 for 15x15)
-                # This prevents MSE from dominating the CrossEntropy loss.
-                distance_batch = distance_batch / 100.0
                 
                 mask_tensor = torch.tensor(mask, dtype=torch.float32, device=device)
                 
