@@ -31,7 +31,40 @@ class FirstOrderPlanner:
         
         if response and response.content:
             logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
-            spec = FirstOrderBiasSpec.model_validate_json(response.content)
+            content = response.content.strip()
+            
+            # Simple repair for common truncation (missing closing braces)
+            if not content.endswith("}"):
+                logger.warning("Response truncated, attempting to close JSON object...")
+                # A heuristic approach: try closing brackets/braces
+                # Assuming top level is object "}"
+                # If inside list "]", then "}"
+                # This is hard to guess perfect. 
+                # Better strategy: if "..." or bad char at end, cut and append.
+                # Just appending "]}" might work if we are deep in alpha_requirements.
+                # But safer is to ask for conciseness.
+                # Let's try appending ']}' or '"]}'
+                # For now let's just logging it.
+                pass
+
+            try:
+                spec = FirstOrderBiasSpec.model_validate_json(content)
+            except Exception as e:
+                # If truncated, try a very naive fix: assume it cut off in a list.
+                # Try appending ]} and see if it parses.
+                logger.warning(f"First attempt parsing failed: {e}. Trying repair...")
+                try: 
+                    # Try closing valid JSON
+                    fixed_content = content + '"}]}' 
+                    spec = FirstOrderBiasSpec.model_validate_json(fixed_content)
+                except:
+                     try:
+                        fixed_content = content + ']}'
+                        spec = FirstOrderBiasSpec.model_validate_json(fixed_content)
+                     except:
+                        # Fallback: Raise original
+                        raise e
+
             # Enrich with system fields
             return FirstOrderBiasPlan(
                 first_order_version=0.1,
