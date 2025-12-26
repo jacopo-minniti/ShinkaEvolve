@@ -56,11 +56,16 @@ Constraints:
 - `compute_loss` must return a scalar `torch.Tensor` just like standard PyTorch losses.
 - Parameter count must stay under the limit ({max_params}).
 - Training budget is fixed ({training_epochs} epochs). Code efficient, fast-converging architectures.
-- Be creative with:
-    - Experience replay buffers (if you implement them inside the model/loss loop)
-    - Memory (RNNs, GRUs, LSTMs) to handle partial observability
-    - Attention mechanisms (Transformers)
-    - Auxiliary losses (e.g. predicting distance to goal)
+- The training loop trains on SEQUENCES (episodes).
+- If your model is stateful (e.g. RNN, GRU, LSTM):
+    - You MUST implement `reset_state(self)` to clear the internal hidden states.
+    - `reset_state` will be called at the beginning of each episode/batch.
+    - Ensure your forward pass handles batches appropriately (e.g. broadcasting or keeping state shape (1, B, H)).
+
+Be creative with:
+- Temporal Logic (RNNs, LSTMs, GRUs) to integrate information over time.
+- Auxiliary losses to guide the learning (e.g. distance prediction).
+- Attention mechanisms.
 
 The evaluation script handles the training loop and data loading. You primarily control the architecture and loss function definition.
 """
