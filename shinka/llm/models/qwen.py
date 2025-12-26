@@ -6,6 +6,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _split_think_tags(text: str) -> tuple[str, str]:
+    if not text:
+        return "", ""
+    match = re.search(r"<think>(.*?)</think>", text, re.DOTALL | re.IGNORECASE)
+    if not match:
+        match = re.search(
+            r"<analysis>(.*?)</analysis>", text, re.DOTALL | re.IGNORECASE
+        )
+    if not match:
+        return "", text.strip()
+    thought = match.group(1).strip()
+    content = (text[: match.start()] + text[match.end() :]).strip()
+    return thought, content
+
 
 def backoff_handler(details):
     exc = details.get("exception")
@@ -38,7 +52,6 @@ def query_qwen(
     **kwargs,
 ) -> QueryResult:
     """Query Qwen model."""
-    msg = f"{msg}\\think"
     new_msg_history = msg_history + [{"role": "user", "content": msg}]
     args_dict = {
         "model": model,
@@ -78,26 +91,22 @@ def query_qwen(
     new_msg_history.append({"role": "assistant", "content": text})
 
     message = response.choices[0].message
+    raw_content = getattr(message, "content", "") or ""
     thought = getattr(message, "reasoning", None) or getattr(
         message, "reasoning_content", None
     )
-    if thought is None:
-        thought_match = re.search(
-            r"<think>(.*?)</think>", message.content, re.DOTALL
-        )
-        thought = thought_match.group(1) if thought_match else ""
-
-    content_match = re.search(
-        r"<think>(.*?)</think>", message.content, re.DOTALL
-    )
-    if content_match:
-        # Extract everything before and after the <think> tag as content
-        content = (
-            message.content[: content_match.start()]
-            + message.content[content_match.end() :]
-        ).strip()
+    content = raw_content
+    if thought:
+        thought = str(thought).strip()
+        tag_thought, tag_content = _split_think_tags(raw_content)
+        if tag_content:
+            content = tag_content
+        if not thought and tag_thought:
+            thought = tag_thought
     else:
-        content = message.content
+        tag_thought, tag_content = _split_think_tags(raw_content)
+        thought = tag_thought
+        content = tag_content
 
     # Qwen Local Usage
     # Pricing is 0 for local

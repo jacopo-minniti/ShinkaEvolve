@@ -8,10 +8,10 @@ class BiasRequirement(BaseModel):
     why_task_requires_it: str
 
 class FirstOrderBiasSpec(BaseModel):
-    task_summary: str = ""
-    alpha_requirements: List[BiasRequirement] = Field(default_factory=list, min_length=1)
-    omega_requirements: List[BiasRequirement] = Field(default_factory=list, min_length=1)
-    phi_requirements: List[BiasRequirement] = Field(default_factory=list, min_length=1)
+    task_summary: str = Field(min_length=1)
+    alpha_requirements: List[BiasRequirement] = Field(min_length=1)
+    omega_requirements: List[BiasRequirement] = Field(min_length=1)
+    phi_requirements: List[BiasRequirement] = Field(min_length=1)
 
 class FirstOrderBiasPlan(FirstOrderBiasSpec):
     first_order_version: float = 0.1
