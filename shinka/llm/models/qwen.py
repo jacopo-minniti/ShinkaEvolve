@@ -38,6 +38,7 @@ def query_qwen(
     **kwargs,
 ) -> QueryResult:
     """Query Qwen model."""
+    msg = f"{msg}\\think"
     new_msg_history = msg_history + [{"role": "user", "content": msg}]
     args_dict = {
         "model": model,
@@ -60,6 +61,11 @@ def query_qwen(
         }
         # Force temperature to something reasonable for constrained generation (optional)
         # but respecting kwargs if set.
+
+    extra_body = args_dict.get("extra_body") or {}
+    extra_body.setdefault("chat_template_kwargs", {})
+    extra_body["chat_template_kwargs"]["enable_thinking"] = True
+    args_dict["extra_body"] = extra_body
     
     response = client.chat.completions.create(**args_dict)
     
