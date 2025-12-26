@@ -179,13 +179,26 @@ def evaluate_model(model, test_data, args, device) -> Dict:
                 )
                 
                 outputs = model(obs)
-                
+
                 if isinstance(outputs, torch.Tensor):
-                    action = torch.argmax(outputs, dim=1).item()
-                elif hasattr(outputs, 'logits'):
-                    action = torch.argmax(outputs.logits, dim=1).item()
+                    logits = outputs
+                elif hasattr(outputs, "logits"):
+                    logits = outputs.logits
+                elif isinstance(outputs, (tuple, list)) and outputs:
+                    logits = outputs[0]
+                elif isinstance(outputs, dict) and "logits" in outputs:
+                    logits = outputs["logits"]
                 else:
-                    action = 0 
+                    logits = None
+
+                if logits is None:
+                    logger.warning(
+                        "Model outputs do not expose logits; defaulting action to 0. "
+                        "Expected Tensor, .logits, tuple/list with logits first, or dict['logits']."
+                    )
+                    action = 0
+                else:
+                    action = torch.argmax(logits, dim=1).item()
                     
                 # Execute action: 0:U, 1:D, 2:L, 3:R
                 dr, dc = 0, 0

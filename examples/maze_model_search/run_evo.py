@@ -12,6 +12,8 @@ logging.basicConfig(
 )
 
 job_config = LocalJobConfig(eval_program_path="examples/maze_model_search/evaluate.py")
+training_epochs = 5
+max_params = 100_000
 
 parent_config = dict(
     parent_selection_strategy="power_law",
@@ -32,7 +34,7 @@ db_config = DatabaseConfig(
     **parent_config,
 )
 
-task_sys_msg = """You are an expert in deep learning and reinforcement learning architectures.
+task_sys_msg = f"""You are an expert in deep learning and reinforcement learning architectures.
 Your goal is to design a PyTorch model (EvolvedModel) that can learn to solve mazes under partial observability.
 
 Input:
@@ -47,10 +49,13 @@ Logits for 4 actions: Up, Down, Left, Right.
 Constraints:
 - You must define `class EvolvedModel(nn.Module)`.
 - It must implement `compute_loss(self, batch, outputs)`.
-- `forward` should return action logits only (no loss, no extra side effects).
+- `forward` output must expose action logits in one of these forms:
+  - a single Tensor of shape (B, 4)
+  - a tuple/list where logits are the first element
+  - a dict with key "logits"
 - `compute_loss` must return a scalar `torch.Tensor` just like standard PyTorch losses.
-- Parameter count must stay under the limit (100k).
-- Training budget is fixed (3 Epochs). Code efficient, fast-converging architectures.
+- Parameter count must stay under the limit ({max_params}).
+- Training budget is fixed ({training_epochs} epochs). Code efficient, fast-converging architectures.
 - Be creative with:
     - Experience replay buffers (if you implement them inside the model/loss loop)
     - Memory (RNNs, GRUs, LSTMs) to handle partial observability
@@ -65,6 +70,7 @@ evo_config = EvolutionConfig(
     num_generations=100,
     max_parallel_jobs=1,
     max_patch_resamples=3,
+    max_repair_attempts=3,
     job_type="local",
     language="python",
     llm_models=["Qwen/Qwen3-30B-A3B-Thinking-2507"],
@@ -73,8 +79,9 @@ evo_config = EvolutionConfig(
         max_tokens=20000,
     ),
     results_dir="results/maze_qwen3-30B-bias",
-    max_params=80_000,
-    training_epochs=5,
+    max_params=max_params,
+    training_epochs=training_epochs,
+    num_previous_gen_errors=3,
 )
 
 if __name__ == "__main__":

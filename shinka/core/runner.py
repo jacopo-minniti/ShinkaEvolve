@@ -76,6 +76,7 @@ class EvolutionConfig:
     # Constraints
     max_params: int = 100_000
     training_epochs: int = 3
+    num_previous_gen_errors: int = 3
 
 @dataclass
 class RunningJob:
@@ -152,6 +153,9 @@ class EvolutionRunner:
 
         # Job counter per generation
         self.generation_job_counters = {} # gen -> int
+        
+        # Global failure history
+        self.global_error_history = []
 
         # Initialize LLM Client
         from shinka.llm.llm import LLMClient
@@ -438,7 +442,8 @@ class EvolutionRunner:
                     parent_code=parent_code, 
                     component=target_comp,
                     artifact_dir=job_dir,
-                    eval_script_content=self.eval_script_content
+                    eval_script_content=self.eval_script_content,
+                    historical_errors=self.global_error_history[-self.evo_config.num_previous_gen_errors:]
                 )
                 
                 # 4. Submit
@@ -497,6 +502,10 @@ class EvolutionRunner:
         correct = results.get("correct", {}).get("correct", False) if results else False
         stderr_log = results.get("stderr_log", "") if results else "No results found."
 
+        if not correct:
+             # Add to global history
+             self.global_error_history.append(f"Job {job.job_id} Error:\n{stderr_log}")
+
         # REPAIR LOGIC
         if not correct and job.retry_count < self.evo_config.max_repair_attempts:
             logger.info(f"Job failed (Attempt {job.retry_count}). Attempting Repair...")
@@ -512,7 +521,8 @@ class EvolutionRunner:
                     # If structure is broken, maybe All. If just invalid syntax in region, component?
                     # Safest is All for repair to fix imports etc.
                     artifact_dir=job.job_dir,
-                    eval_script_content=self.eval_script_content
+                    eval_script_content=self.eval_script_content,
+                    historical_errors=self.global_error_history[-self.evo_config.num_previous_gen_errors:]
                 )
                 
                 # Overwrite main.py? User said "replace also the retry_1 once you write retry_2".

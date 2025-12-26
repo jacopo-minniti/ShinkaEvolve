@@ -150,8 +150,9 @@ class ImplementationAgent:
         self, 
         genome: SecondOrderGenome, 
         parent_code: str, 
-        previous_errors: Optional[str] = None, 
-        component: str = "All", 
+        component: str, 
+        previous_errors: Optional[str] = None,
+        historical_errors: Optional[List[str]] = None,
         artifact_dir: Optional[str] = None,
         eval_script_content: Optional[str] = None
     ) -> str:
@@ -203,8 +204,18 @@ class ImplementationAgent:
             
         if previous_errors:
             user_msg += f"\nPrevious Implementation Errors:\n{previous_errors}"
+
+        if historical_errors and len(historical_errors) > 0:
+            user_msg += f"\n\nHistorical Errors (Context from previous generations):\n"
+            for i, err in enumerate(historical_errors):
+                user_msg += f"--- History {i+1} ---\n{err}\n"
         else:
-            user_msg += "\nModify the code region to match the new genome."
+            if not previous_errors:
+                user_msg += "\nModify the code region to match the new genome."
+        
+        # Add instruction if any errors present
+        if previous_errors or (historical_errors and len(historical_errors) > 0):
+             user_msg += "\n\nCRITICAL: You MUST analyze the above errors. If they relate to your current task, ensure your implementation fixes or avoids them."
 
         formatted_sys_msg = IMPLEMENTATION_AGENT_SYS_PROMPT.format(component=component)
         response = self.llm.query(msg=user_msg, system_msg=formatted_sys_msg)

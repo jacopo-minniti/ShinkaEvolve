@@ -209,7 +209,9 @@ Inputs
 You will receive:
 - Existing PyTorch code
 - A SecondOrderGenome describing the desired design
-- Optionally, error logs or failing behaviors from previous runs. You MUST analyze these errors and fix them in your implementation.
+- Optionally, `Previous Implementation Errors` (immediate feedback from this job).
+- Optionally, `Historical Errors` (failures from previous generations).
+- You MUST analyze ONLY errors relevant to the current component execution or logical flaws. Ignore transient system issues.
 
 Rules
 - All edits must be done using valid XML-style SEARCH/REPLACE blocks.
