@@ -45,9 +45,6 @@ For **each component**, produce a set of bias entries. Each bias entry must incl
   - `omega_requirements` (list of bias entries)
 
 **Note:** It is important that you produce at least one bias for each component.
-- Keep descriptions **SHORT** (1-2 sentences max).
-- Ensure the prompt doesn't exhaust the token limit.
-- Be extremely concise in `why_task_requires_it`.
 """
 
 

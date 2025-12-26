@@ -36,9 +36,12 @@ class ComponentParams(BaseModel):
     biases: List[BiasEntry] = Field(default_factory=list)
 
 class LearnerSpec(BaseModel):
-    Alpha: ComponentParams = Field(default_factory=lambda: ComponentParams())
-    Omega: ComponentParams = Field(default_factory=lambda: ComponentParams())
-    Phi: ComponentParams = Field(default_factory=lambda: ComponentParams())
+    Alpha: ComponentParams = Field(default_factory=lambda: ComponentParams(), alias="alpha")
+    Omega: ComponentParams = Field(default_factory=lambda: ComponentParams(), alias="omega")
+    Phi: ComponentParams = Field(default_factory=lambda: ComponentParams(), alias="phi")
+
+    class Config:
+        populate_by_name = True
 
 class BaseSecondOrderGenome(BaseModel):
     high_level_description: str = ""

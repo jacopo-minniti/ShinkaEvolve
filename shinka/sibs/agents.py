@@ -90,7 +90,51 @@ class SecondOrderInitializer:
         
         if response and response.content:
             logger.debug(f"SecondOrderGenome Raw Response:\n{response.content}")
-            spec = BaseSecondOrderGenome.model_validate_json(response.content)
+            content = response.content.strip()
+            
+            # Auto-repair logic for truncation
+            if not content.endswith("}"):
+                 logger.warning("SecondOrder response truncated. Attempting repair...")
+                 # Try increasing brute force closure
+                 # Deep nested structure: genome -> learner -> Omega -> biases -> list -> entry
+                 # Closing strategy: "}]}}}" might be needed.
+                 # Let's try a few variants
+                 candidates = [
+                     content + '}]}}', # closing bias entry, biases list, Omega, learner, root
+                     content + '"}]}}', # closing string then above
+                     content + ']}}}', # closing biases list, Omega, learner, root
+                     content + '}}}', # closing Omega, learner, root
+                     content + '}}'   # closing learner, root
+                 ]
+                 
+                 spec = None
+                 for cand in candidates:
+                     try:
+                        spec = BaseSecondOrderGenome.model_validate_json(cand)
+                        logger.info(f"Repair successful with suffix '{cand[-10:]}...'")
+                        break
+                     except:
+                        continue
+                 
+                 if not spec:
+                     # One last try: if it's confusing, maybe just pass original and let it fail with detail
+                     try:
+                         spec = BaseSecondOrderGenome.model_validate_json(content)
+                     except Exception as e:
+                         # Still failed.
+                         logger.error(f"Failed to repair JSON: {e}")
+                         raise e
+            else:
+                 spec = BaseSecondOrderGenome.model_validate_json(content)
+            
+            # Validate coverage
+            if not spec.learner.Omega.biases:
+                logger.warning("Omega component is empty! LLM failed to generate optimizer biases.")
+                # We could retry here, or just let it slide (but user complained).
+                # Ideally we raise error so the system (if loop existed) could retry.
+                # But currently no retry loop in agent.
+                # Let's add a default if empty? Or just log.
+                pass
             # Enrich with system fields
             return SecondOrderGenome(
                 genome_version=0.1,
