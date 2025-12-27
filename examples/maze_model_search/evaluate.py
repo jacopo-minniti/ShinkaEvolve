@@ -354,7 +354,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="data/maze_quick")
     parser.add_argument("--train_steps", type=int, default=2000, help="Number of gradient update steps")
-    parser.add_argument("--batch_size", type=int, default=16, help="Number of episodes per batch")
+    parser.add_argument("--batch_size", type=int, default=32, help="Number of episodes per batch")
     parser.add_argument("--max_params", type=int, default=100_000)
     parser.add_argument("--obs_size", type=int, default=7)
     parser.add_argument("--maze_size_max", type=int, default=15)
