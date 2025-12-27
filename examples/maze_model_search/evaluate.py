@@ -29,17 +29,12 @@ def get_local_crop(maze, pos, obs_size, goal_pos):
     crop = torch.zeros((2, obs_size, obs_size), dtype=torch.float32)
     
     # Pad maze with walls for out-of-bounds extraction
-    pad_maze = torch.zeros((rows + 2 * half, cols + 2 * half), dtype=torch.int8) # 0 is wall here for ease? 
-    # Actually, in maze: 0=wall, 1=free.
-    # Let's make pad_maze consistent: 0=wall.
+    pad_maze = torch.zeros((rows + 2 * half, cols + 2 * half), dtype=torch.int8)
     
     # Place actual maze in center of padded
     pad_maze[half:rows+half, half:cols+half] = maze
     
     # Extract window
-    # padded coords: r+half, c+half is the center
-    # slice: (r+half)-half : (r+half)+half+1
-    #      = r : r+obs_size
     window = pad_maze[r:r+obs_size, c:c+obs_size]
     
     # Channel 0: Walls. pad_maze has 0=wall, 1=free. We want 1=wall, 0=free.
@@ -48,8 +43,6 @@ def get_local_crop(maze, pos, obs_size, goal_pos):
     # Channel 1: Goal
     # Goal is at goal_pos in original coords.
     # In window coords (relative to r-half, c-half):
-    # gr = goal_r - (r - half)
-    # gc = goal_c - (c - half)
     gr = goal_pos[0] - (r - half)
     gc = goal_pos[1] - (c - half)
     
@@ -63,7 +56,8 @@ def get_stats(model):
 
 def train_model(model, train_data, args, device) -> Dict:
     """
-    Trains the model for a fixed number of steps using sequence-based training.
+    Trains the model using sequence-based imitation learning.
+    Each batch contains multiple episodes processed in parallel through time.
     """
     if args.max_params and get_stats(model) > args.max_params:
         raise ValueError(
@@ -75,67 +69,65 @@ def train_model(model, train_data, args, device) -> Dict:
     else:
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     
-    # train_data is a list of dicts, each has 'episode' which is a list of steps.
+    # Extract episodes from training data
     episodes = [ep['episode'] for ep in train_data]
-    
-    model.train()
-    total_loss = 0
-    num_batches = 0
-    current_step = 0
-    
-    # We will count "steps" as number of parameter updates (batches) 
-    # or maintain original definition roughly? 
-    # Valid steps in original was total partial steps. 
-    # Let's count updates.
     
     if not hasattr(model, "compute_loss"):
         raise ValueError("Model must implement compute_loss(batch, outputs)")
 
+    # Calculate number of epochs to achieve target number of training steps
+    # If we have N episodes and batch_size B, we get N/B batches per epoch
+    batches_per_epoch = max(1, len(episodes) // args.batch_size)
+    num_epochs = max(1, args.train_steps // batches_per_epoch)
+    
     logger.info(
-        "Training start: epochs=%d, batch_size=%d (episodes), device=%s",
-        args.training_epochs,
-        args.batch_size,
-        device,
+        "Training start: episodes=%d, batch_size=%d, batches_per_epoch=%d, epochs=%d, train_steps=%d, device=%s",
+        len(episodes), args.batch_size, batches_per_epoch, num_epochs, args.train_steps, device,
     )
     
-    for epoch in range(args.training_epochs):
-        # Shuffle episodes
+    model.train()
+    total_loss = 0.0
+    num_batches = 0
+    
+    for epoch in range(num_epochs):
+        # Shuffle episodes each epoch
         indices = torch.randperm(len(episodes))
         
         for i in range(0, len(episodes), args.batch_size):
             idx_batch = indices[i : i + args.batch_size]
+            if len(idx_batch) < args.batch_size:
+                continue  # Skip incomplete batches for consistent batch size
+                
             batch_episodes = [episodes[idx] for idx in idx_batch]
             
-            # Reset model state for the new batch
+            # Reset model state for this batch of episodes
             if hasattr(model, "reset_state"):
                 model.reset_state()
                 
-            # Prepare batch data with padding
-            # Max length in this batch
+            # Find max sequence length in this batch
             max_len = max(len(ep) for ep in batch_episodes)
             batch_size = len(batch_episodes)
             
-            # Accumulate loss over time
-            batch_loss = 0
-            valid_steps = 0
+            # Accumulate loss over the sequence
+            sequence_loss = 0.0
+            num_valid_steps = 0
             
-            # We iterate through time
+            # Iterate through timesteps
             for t in range(max_len):
-                # Construct step batch for time t
+                # Collect data for timestep t from all episodes in batch
                 current_steps = []
-                mask = [] # 1 if valid, 0 if padded
+                mask = []  # 1.0 if valid timestep, 0.0 if padding
                 
                 for ep in batch_episodes:
                     if t < len(ep):
                         current_steps.append(ep[t])
                         mask.append(1.0)
                     else:
-                        # Padding: just use the last valid step or zeros to avoid shape errors
-                        # The loss will be masked anyway.
-                        current_steps.append(ep[-1]) # Use last one safer than zeros for shapes
+                        # Padding: reuse last step to maintain tensor shapes
+                        current_steps.append(ep[-1])
                         mask.append(0.0)
-                        
-                # Stack
+                
+                # Create batched tensors
                 obs_batch = torch.stack([s['obs'] for s in current_steps]).to(device)
                 action_batch = torch.tensor(
                     [s['action'] for s in current_steps], dtype=torch.long, device=device
@@ -143,51 +135,60 @@ def train_model(model, train_data, args, device) -> Dict:
                 distance_batch = torch.tensor(
                     [s['distance'] for s in current_steps], dtype=torch.float32, device=device
                 )
-                
                 mask_tensor = torch.tensor(mask, dtype=torch.float32, device=device)
                 
                 step_batch_dict = {
                     'obs': obs_batch,
                     'action': action_batch,
                     'target': action_batch,
-                    'distance': distance_batch
+                    'distance': distance_batch,
+                    'mask': mask_tensor  # Provide mask in case model wants to use it
                 }
                 
-                # Forward
+                # Forward pass
                 outputs = model(obs_batch)
                 
-                # Loss
+                # Compute loss for this timestep
                 loss = model.compute_loss(step_batch_dict, outputs)
                 
-                # Verify loss
+                # Validate loss
                 if not isinstance(loss, torch.Tensor):
                     raise ValueError("compute_loss must return a torch.Tensor")
-                
                 if not torch.isfinite(loss).all():
-                     raise ValueError(f"Loss is not finite: {loss.item()}")
+                    raise ValueError(f"Loss is not finite: {loss.item()}")
                 
-                # Helper to scale loss if needed (e.g. by mask mean? No, loss is already mean).
-                # We just sum it up.
-                batch_loss += loss
+                # Weight loss by proportion of valid (non-padded) samples at this timestep
+                mask_weight = mask_tensor.mean()  # Fraction of valid samples
+                if mask_weight > 0:
+                    sequence_loss += loss * mask_weight
+                    num_valid_steps += 1
             
-            # Normalize sequence loss by sequence length? 
-            # Or just backward sum. 
-            # Mean over time is better for stability.
-            batch_loss = batch_loss / max_len
+            # Average loss over valid timesteps in the sequence
+            if num_valid_steps > 0:
+                sequence_loss = sequence_loss / num_valid_steps
+            else:
+                # Edge case: no valid steps (shouldn't happen with proper data)
+                continue
             
+            # Backpropagation through the entire sequence
             optimizer.zero_grad()
-            batch_loss.backward()
+            sequence_loss.backward()
             optimizer.step()
             
-            total_loss += batch_loss.item()
+            total_loss += sequence_loss.item()
             num_batches += 1
-            current_step += 1
 
-            if current_step % 100 == 0:
-                logger.info("Training progress: Epoch %d/%d | Batch %d | Avg Loss %.6f",
-                            epoch + 1, args.training_epochs, current_step, total_loss / max(num_batches, 1))
+            if num_batches % 50 == 0:
+                avg_loss = total_loss / num_batches
+                logger.info(
+                    "Training progress: Epoch %d/%d | Batch %d | Avg Loss %.6f",
+                    epoch + 1, num_epochs, num_batches, avg_loss
+                )
 
-    return {"train_loss_final": total_loss / num_batches if num_batches else 0.0}
+    final_avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+    logger.info("Training complete: total_batches=%d, final_avg_loss=%.6f", num_batches, final_avg_loss)
+    
+    return {"train_loss_final": final_avg_loss}
 
 def evaluate_model(model, test_data, args, device) -> Dict:
     """
@@ -352,8 +353,8 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="data/maze_quick")
-    parser.add_argument("--training_epochs", type=int, default=3)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--train_steps", type=int, default=2000, help="Number of gradient update steps")
+    parser.add_argument("--batch_size", type=int, default=16, help="Number of episodes per batch")
     parser.add_argument("--max_params", type=int, default=100_000)
     parser.add_argument("--obs_size", type=int, default=7)
     parser.add_argument("--maze_size_max", type=int, default=15)
