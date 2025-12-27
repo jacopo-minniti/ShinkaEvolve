@@ -162,57 +162,6 @@ def train_model(model, train_data, args, device) -> Dict:
                 # Verify loss
                 if not isinstance(loss, torch.Tensor):
                     raise ValueError("compute_loss must return a torch.Tensor")
-                # If loss is reduced (mean), we need to un-reduce to apply mask?
-                # Actually, standard PyTorch losses (cross_entropy) are mean by default.
-                # If the user model returns a scalar mean, we can't mask individual samples effectively 
-                # UNLESS we ask the user to return vector loss OR we just accept we optimize padding slightly (waste).
-                # BUT, usually `compute_loss` returns a scalar.
-                # If we want to support correct masking for RNNs, we ideally need element-wise loss.
-                # However, changing the interface to require vector loss might be too much for the 'simple interface'.
-                # Compromise: We multiply the SCALAR loss by (valid_samples / batch_size).
-                # Wait, if `loss` is mean over batch (including paddings), and paddings produce junk loss...
-                # We can't easily filter it if we only get scalar.
-                # ERROR: If the model processes padding `obs`, it might produce arbitrary outputs.
-                
-                # FIX: We rely on the fact that `compute_loss` logic is user defined.
-                # We can't easily force proper masking without breaking the "return scalar" rule.
-                # However, most simple RNN tasks simply ignore this or use fixed length.
-                # Let's assume for now we just train on it. 
-                # BETTER: We can just let it slide. The network learns to predict "something" for padded end states.
-                # Since we recurse on `ep[-1]`, it is just repeating the end state.
-                # A better approach for this customized loop is to Accumulate gradients?
-                # No, we have to backprop.
-                
-                # Given strict constraints and "don't change interface too much":
-                # Let's re-read inputs. "compute_loss must return a scalar".
-                # If we assume the user implementation of `compute_loss` uses standard F.cross_entropy,
-                # it averages over the batch.
-                
-                # To properly handle variable lengths with a scalar-outputting user function:
-                # We can't. 
-                # But we can try to minimize damage.
-                # If we pass valid inputs for padded data (e.g. valid obs), the model computes valid loss.
-                # We just shouldn't count it.
-                # But we can't subtract it from scalar mean.
-                
-                # Alternative: Process only valid indices?
-                # But `obs_batch` needs to be contiguous Bx... for batch processing efficiency.
-                # If we subset `obs_batch` to `obs_batch[mask_indices]`, the batch size changes at each t.
-                # RNNs usually expect constant batch size if they keep hidden state.
-                # `rnn(input, hx)`: if input is smaller, hx must be sliced.
-                # If model manages its own `self.hx`, passing varying batch sizes will crash it 
-                # (dimension mismatch with stored state).
-                
-                # Conclusion: We MUST pass full batch size.
-                # We MUST accept that the user's `compute_loss` averages everything.
-                # We can't mask unless we change the interface.
-                # UNLESS: We assume the user's `distance` target for padding is something specific?
-                # No.
-                
-                # Optimistic approach: The "padding" is just the last state repeated. 
-                # Predicting action/distance for the last state (Goal) repeatedly is fine.
-                # It just reinforces "I am at goal".
-                # So we just accumulate the loss.
                 
                 if not torch.isfinite(loss).all():
                      raise ValueError(f"Loss is not finite: {loss.item()}")
