@@ -12,9 +12,11 @@ logging.basicConfig(
 )
 
 job_config = LocalJobConfig(eval_program_path="examples/maze_model_search/evaluate.py")
+train_steps = 2000
 max_params = 100_000
-train_steps = 2000  # Number of gradient update steps
-batch_size = 16  # Number of episodes per training batch
+obs_size = 7
+maze_size_max = 15
+batch_size = 32
 
 parent_config = dict(
     parent_selection_strategy="power_law",
@@ -36,50 +38,31 @@ db_config = DatabaseConfig(
 )
 
 task_sys_msg = f"""You are an expert in deep learning and reinforcement learning architectures.
+Your goal is to design a PyTorch model (EvolvedModel) that can learn to solve mazes under partial observability.
 
-**Task**: Design a PyTorch model (EvolvedModel) that learns to solve mazes under partial observability using **imitation learning on expert trajectories**.
-
-**Training Paradigm**:
-The model is trained on SEQUENCES of expert demonstrations:
-- Each training batch contains {batch_size} episodes (expert trajectories) processed in parallel
-- Episodes are processed step-by-step through time, allowing the model to maintain temporal state
-- Your model's forward() is called sequentially: forward(t=0), forward(t=1), ..., forward(t=T)
-- This sequential processing enables models with memory to learn long-term strategies
-
-**Input**:
-Observations of shape (B, 2, obs_size, obs_size) where obs_size=7:
+Input:
+A batch of observations of shape (B, 2, {obs_size}, {obs_size}).
 - Channel 0: Wall map (1=wall, 0=empty)
-- Channel 1: Goal map (1=goal visible, 0=not visible)
-- The agent is always at the center (position 3,3 in the 7×7 grid)
+- Channel 1: Goal map (1=goal, 0=empty)
+The agent is always at the center of the observation.
 
-**Output**:
-Action logits for 4 actions: [Up, Down, Left, Right]
-Must be exposed as one of:
-  - A single Tensor of shape (B, 4)
-  - A tuple/list where action logits are the first element
-  - A dict with key "logits"
+Output:
+Logits for 4 actions: Up, Down, Left, Right.
 
-**Required Methods**:
-1. `__init__(self)`: Initialize your architecture
-2. `forward(self, x)`: Process one observation, return action logits
-3. `compute_loss(self, batch, outputs)`: Return scalar loss tensor
-   - batch dict contains: 'obs', 'action', 'target', 'distance', 'mask'
-   - 'mask' indicates valid (non-padded) timesteps: 1.0 = valid, 0.0 = padding
-4. **For stateful models only (if you use recurrent layers)**:
-   - `reset_state(self)`: Reset hidden states to None at the start of new episodes
-   - Store hidden state as instance variable (e.g., self.hidden_state)
-   - In forward(), initialize hidden state if None, otherwise use stored state
-   - The hidden state's batch dimension automatically handles parallel episodes
+Constraints:
+- You must define `class EvolvedModel(nn.Module)`.
+- It must implement `compute_loss(self, batch, outputs)`.
+- `forward` should return action logits only (no loss, no extra side effects).
+- `compute_loss` must return a scalar `torch.Tensor` just like standard PyTorch losses.
+- Parameter count must stay under the limit ({max_params:,} parameters).
+- Training budget is fixed and very limited ({train_steps:,} steps). Code efficient, fast-converging architectures.
+- Be creative with:
+    - Experience replay buffers (if you implement them inside the model/loss loop)
+    - Memory (RNNs, GRUs, LSTMs) to handle partial observability
+    - Attention mechanisms (Transformers)
+    - Auxiliary losses (e.g. predicting distance to goal)
 
-**Constraints**:
-- Parameter count must be < {max_params}
-- Training budget: {train_steps} gradient update steps
-- The model must converge quickly with this limited budget
-
-**Key Insight**:
-Under partial observability, the agent cannot see the entire maze. Memory of past observations is crucial for navigation. Consider how your architecture can integrate information over time to build a mental representation of the environment.
-
-The evaluation script handles all training and evaluation. You only control the architecture and loss function.
+The evaluation script handles the training loop and data loading. You primarily control the architecture and loss function definition.
 """
 
 evo_config = EvolutionConfig(
