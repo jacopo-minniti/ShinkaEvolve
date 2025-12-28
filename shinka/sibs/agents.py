@@ -499,6 +499,10 @@ class ReflectionWriter:
         
         if not response or not response.content:
             logger.warning("Reflection generation failed - no response from LLM")
+            self._save_reflection_diagnostic(
+                parent_genome, parent_metrics, child_genome, child_metrics,
+                user_msg, None, "NO_RESPONSE"
+            )
             return child_genome
         
         # Parse plain text reflection
@@ -508,8 +512,78 @@ class ReflectionWriter:
         if "```" in reflection_text:
             reflection_text = reflection_text.replace("```", "").strip()
         
+        # Check if reflection is meaningful (not just empty or very short)
+        if len(reflection_text) < 20:
+            logger.warning(f"Reflection is too short ({len(reflection_text)} chars): '{reflection_text}'")
+            self._save_reflection_diagnostic(
+                parent_genome, parent_metrics, child_genome, child_metrics,
+                user_msg, response.content, "TOO_SHORT"
+            )
+        
         # Store reflection in child genome metadata
         child_genome.metadata["reflection"] = reflection_text
-        logger.info("Reflection generated successfully")
+        logger.info(f"Reflection generated successfully ({len(reflection_text)} chars)")
         
         return child_genome
+    
+    def _save_reflection_diagnostic(
+        self,
+        parent_genome: SecondOrderGenome,
+        parent_metrics: Dict[str, Any],
+        child_genome: SecondOrderGenome,
+        child_metrics: Dict[str, Any],
+        user_msg: str,
+        llm_response: Optional[str],
+        issue: str
+    ):
+        """Save diagnostic information when reflection fails or is problematic."""
+        debug_dir = Path("debug_reflection_failures")
+        debug_dir.mkdir(exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        debug_file = debug_dir / f"reflection_{issue}_{timestamp}.md"
+        
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write("# Reflection Diagnostic Report\n\n")
+            f.write(f"**Timestamp**: {timestamp}\n")
+            f.write(f"**Issue**: {issue}\n\n")
+            
+            f.write("---\n\n")
+            f.write("## Parent Genome\n\n")
+            f.write("```json\n")
+            f.write(BaseSecondOrderGenome(**parent_genome.model_dump()).model_dump_json(indent=2))
+            f.write("\n```\n\n")
+            
+            f.write("## Parent Metrics\n\n")
+            f.write("```json\n")
+            f.write(str(parent_metrics))
+            f.write("\n```\n\n")
+            
+            f.write("---\n\n")
+            f.write("## Child Genome\n\n")
+            f.write("```json\n")
+            f.write(BaseSecondOrderGenome(**child_genome.model_dump()).model_dump_json(indent=2))
+            f.write("\n```\n\n")
+            
+            f.write("## Child Metrics\n\n")
+            f.write("```json\n")
+            f.write(str(child_metrics))
+            f.write("\n```\n\n")
+            
+            f.write("---\n\n")
+            f.write("## User Message (Prompt)\n\n")
+            f.write("```\n")
+            f.write(user_msg)
+            f.write("\n```\n\n")
+            
+            f.write("---\n\n")
+            f.write("## LLM Response\n\n")
+            if llm_response:
+                f.write(f"**Length**: {len(llm_response)} chars\n\n")
+                f.write("```\n")
+                f.write(llm_response)
+                f.write("\n```\n")
+            else:
+                f.write("*No response received from LLM*\n")
+        
+        logger.error(f"Saved reflection diagnostic to: {debug_file}")
+
