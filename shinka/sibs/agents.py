@@ -503,28 +503,8 @@ class ReflectionWriter:
                     **merged_spec.model_dump()
                  )
              except Exception as e:
-                 logger.warning(f"Failed to parse reflected genome JSON: {e}")
-                 
-                 # Attempt repair
-                 repaired_content = _repair_json(content)
-                 try:
-                     logger.info("Attempting to repair JSON...")
-                     new_spec = BaseSecondOrderGenome.model_validate_json(repaired_content)
-                     merged_spec = _merge_reflections(base_genome, new_spec)
-                     _assign_bias_ids(merged_spec)
-              
-                     # Merge back
-                     return SecondOrderGenome(
-                        genome_version=genome.genome_version,
-                        genome_id=genome.genome_id,
-                        island_id=genome.island_id,
-                        parent_id=genome.parent_id,
-                        generation=genome.generation,
-                        fitness=genome.fitness,
-                        **merged_spec.model_dump()
-                     )
-                 except Exception as inner_e:
-                     logger.error(f"Repair failed: {inner_e}")
-                     logger.debug(f"Problematic JSON Content:\n{content}")
-                        
-        raise ValueError("Failed to reflect on genome")
+                 logger.error(f"Failed to parse reflected genome JSON: {e}")
+                 logger.debug(f"Problematic JSON Content:\n{content}")
+                 # Return original genome without reflection updates
+                 logger.warning("Returning original genome without reflection updates")
+                 return genome

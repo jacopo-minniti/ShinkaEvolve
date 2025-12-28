@@ -575,8 +575,13 @@ class EvolutionRunner:
         # Reflection (if correct or final failure)
         genome = SecondOrderGenome.model_validate_json(job.genome_yaml)
         if results and results.get("metrics"):
-             # Optional: Save reflection log
-             genome = self.reflection_writer.reflect(genome, results.get("metrics", {}).get("public", {}))
+             try:
+                 # Optional: Save reflection log
+                 genome = self.reflection_writer.reflect(genome, results.get("metrics", {}).get("public", {}))
+                 logger.info("Reflection completed successfully")
+             except Exception as e:
+                 logger.error(f"Reflection failed: {e}. Continuing with original genome.")
+                 # genome remains unchanged, which is fine - we still save it to DB
         
         self._save_result_to_db(results, rtime, code, genome, job.parent_id, job.generation)
 
