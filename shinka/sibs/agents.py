@@ -1,7 +1,7 @@
 import logging
-import yaml
 import re
-from typing import List, Optional, Tuple, Any, Dict
+from pathlib import Path
+from typing import List, Optional, Dict, Any
 from shinka.llm.llm import LLMClient
 from shinka.sibs.schema import FirstOrderBiasPlan, SecondOrderGenome, FirstOrderBiasSpec, BaseSecondOrderGenome
 from shinka.database import Program
@@ -11,12 +11,62 @@ from shinka.sibs.prompts import (
     IMPLEMENTATION_AGENT_SYS_PROMPT,
     REFLECTION_WRITER_SYS_PROMPT,
     SECOND_ORDER_INITIALIZER_SYS_PROMPT,
-    IMPLEMENTATION_AGENT_SYS_PROMPT
 )
 
 logger = logging.getLogger(__name__)
 
+# ============================================================================
+# Common Utilities
+# ============================================================================
+
+def _parse_structured_output(content: str, model_class):
+    """Parse LLM output, stripping markdown code blocks if present."""
+    content = content.strip()
+    
+    # Strip markdown code blocks
+    if "```json" in content:
+        content = content.replace("```json", "").replace("```", "")
+    elif "```" in content:
+        content = content.replace("```", "")
+    
+    content = content.strip()
+    return model_class.model_validate_json(content)
+
+
+def _apply_diff(original_text: str, diff_text: str) -> str:
+    """
+    Apply SEARCH/REPLACE diff blocks to original text.
+    Pattern: <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE
+    """
+    pattern = re.compile(
+        r"(?:<DIFF>)?\s*<{7}\s*SEARCH\s*\n(.*?)\n\s*={7}\s*\n(.*?)\n\s*>{7}(?:\s*REPLACE)?\s*(?:</DIFF>)?",
+        re.DOTALL,
+    )
+    matches = pattern.findall(diff_text)
+    
+    patched_text = original_text
+    for search_block, replace_block in matches:
+        # Normalize line endings
+        search_block = search_block.replace('\r\n', '\n')
+        replace_block = replace_block.replace('\r\n', '\n')
+        
+        if search_block.strip() == "":
+            continue
+
+        if search_block in patched_text:
+            patched_text = patched_text.replace(search_block, replace_block, 1)
+        else:
+            logger.warning(f"Could not find search block in diff application")
+            
+    return patched_text
+
+
+# ============================================================================
+# Helper Functions
+# ============================================================================
+
 def _assign_bias_ids(spec: BaseSecondOrderGenome) -> None:
+    """Assign unique IDs to each bias in the genome."""
     components = [
         ("Alpha", "alpha_a"),
         ("Phi", "phi_p"),
@@ -29,21 +79,9 @@ def _assign_bias_ids(spec: BaseSecondOrderGenome) -> None:
         for idx, bias in enumerate(comp.biases, start=1):
             bias.bias_id = f"{prefix}{idx}"
 
-def _merge_reflections(
-    original: BaseSecondOrderGenome, updated: BaseSecondOrderGenome
-) -> BaseSecondOrderGenome:
-    components = ["Alpha", "Phi", "Omega"]
-    for attr in components:
-        orig_comp = getattr(original.learner, attr, None)
-        updated_comp = getattr(updated.learner, attr, None)
-        if not orig_comp or not updated_comp:
-            continue
-        for idx, orig_bias in enumerate(orig_comp.biases):
-            if idx < len(updated_comp.biases):
-                orig_bias.reflection = updated_comp.biases[idx].reflection
-    return original
 
 def _assign_first_order_ids(spec: FirstOrderBiasSpec) -> None:
+    """Assign unique IDs to each first-order requirement."""
     components = [
         ("alpha_requirements", "alpha_r"),
         ("phi_requirements", "phi_r"),
@@ -56,12 +94,25 @@ def _assign_first_order_ids(spec: FirstOrderBiasSpec) -> None:
         for idx, req in enumerate(reqs, start=1):
             req.id = f"{prefix}{idx}"
 
+
+# ============================================================================
+# Agent Classes
+# ============================================================================
+
 class FirstOrderPlanner:
+    """Generates first-order bias plans for islands."""
+    
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
     def plan(self, island_id: int, task_description: str, dataset_type: str) -> FirstOrderBiasPlan:
-        user_msg = f"Task Description: {task_description}\nDataset Type: {dataset_type}\nIsland ID: {island_id}\n\nGenerate a FirstOrderBiasPlan in JSON format."
+        """Generate a first-order bias plan for an island."""
+        user_msg = (
+            f"Task Description: {task_description}\n"
+            f"Dataset Type: {dataset_type}\n"
+            f"Island ID: {island_id}\n\n"
+            f"Generate a FirstOrderBiasPlan in JSON format."
+        )
         
         response = self.llm.query(
             msg=user_msg, 
@@ -69,59 +120,36 @@ class FirstOrderPlanner:
             output_model=FirstOrderBiasSpec
         )
         
-        if response and response.content:
-            logger.debug(f"FirstOrderPlanner Raw Response:\n{response.content}")
-            content = response.content.strip()
-            
-            # Simple repair for common truncation (missing closing braces)
-            if not content.endswith("}"):
-                logger.warning("Response truncated, attempting to close JSON object...")
-                # A heuristic approach: try closing brackets/braces
-                # Assuming top level is object "}"
-                # If inside list "]", then "}"
-                # This is hard to guess perfect. 
-                # Better strategy: if "..." or bad char at end, cut and append.
-                # Just appending "]}" might work if we are deep in alpha_requirements.
-                # But safer is to ask for conciseness.
-                # Let's try appending ']}' or '"]}'
-                # For now let's just logging it.
-                pass
-
-            try:
-                spec = FirstOrderBiasSpec.model_validate_json(content)
-            except Exception as e:
-                # If truncated, try a very naive fix: assume it cut off in a list.
-                # Try appending ]} and see if it parses.
-                logger.warning(f"First attempt parsing failed: {e}. Trying repair...")
-                try: 
-                    # Try closing valid JSON
-                    fixed_content = content + '"}]}' 
-                    spec = FirstOrderBiasSpec.model_validate_json(fixed_content)
-                except:
-                     try:
-                        fixed_content = content + ']}'
-                        spec = FirstOrderBiasSpec.model_validate_json(fixed_content)
-                     except:
-                        # Fallback: Raise original
-                        raise e
-
-            _assign_first_order_ids(spec)
-            # Enrich with system fields
-            return FirstOrderBiasPlan(
-                first_order_version=0.1,
-                island_id=island_id,
-                **spec.model_dump()
-            )
-
-        raise ValueError("Failed to generate FirstOrderBiasPlan")
+        if not response or not response.content:
+            raise ValueError("Failed to generate FirstOrderBiasPlan")
+        
+        try:
+            spec = _parse_structured_output(response.content, FirstOrderBiasSpec)
+        except Exception as e:
+            logger.error(f"Failed to parse FirstOrderBiasPlan: {e}")
+            raise
+        
+        _assign_first_order_ids(spec)
+        return FirstOrderBiasPlan(
+            first_order_version=0.1,
+            island_id=island_id,
+            **spec.model_dump()
+        )
 
 
 class SecondOrderInitializer:
+    """Initializes second-order genomes from first-order plans."""
+    
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
     def initialize(self, first_order_plan: FirstOrderBiasPlan, task_description: str) -> SecondOrderGenome:
-        user_msg = f"Task Description: {task_description}\nFirst Order Plan:\n{first_order_plan.model_dump_json(indent=2)}\n\nGenerate an initial SecondOrderGenome in JSON format."
+        """Generate an initial second-order genome from a first-order plan."""
+        user_msg = (
+            f"Task Description: {task_description}\n"
+            f"First Order Plan:\n{first_order_plan.model_dump_json(indent=2)}\n\n"
+            f"Generate an initial SecondOrderGenome in JSON format."
+        )
         
         response = self.llm.query(
             msg=user_msg, 
@@ -129,69 +157,33 @@ class SecondOrderInitializer:
             output_model=BaseSecondOrderGenome
         )
         
-        if response and response.content:
-            logger.debug(f"SecondOrderGenome Raw Response:\n{response.content}")
-            content = response.content.strip()
-            
-            # Auto-repair logic for truncation
-            if not content.endswith("}"):
-                 logger.warning("SecondOrder response truncated. Attempting repair...")
-                 # Try increasing brute force closure
-                 # Deep nested structure: genome -> learner -> Omega -> biases -> list -> entry
-                 # Closing strategy: "}]}}}" might be needed.
-                 # Let's try a few variants
-                 candidates = [
-                     content + '}]}}', # closing bias entry, biases list, Omega, learner, root
-                     content + '"}]}}', # closing string then above
-                     content + ']}}}', # closing biases list, Omega, learner, root
-                     content + '}}}', # closing Omega, learner, root
-                     content + '}}'   # closing learner, root
-                 ]
-                 
-                 spec = None
-                 for cand in candidates:
-                     try:
-                        spec = BaseSecondOrderGenome.model_validate_json(cand)
-                        logger.info(f"Repair successful with suffix '{cand[-10:]}...'")
-                        break
-                     except:
-                        continue
-                 
-                 if not spec:
-                     # One last try: if it's confusing, maybe just pass original and let it fail with detail
-                     try:
-                         spec = BaseSecondOrderGenome.model_validate_json(content)
-                     except Exception as e:
-                         # Still failed.
-                         logger.error(f"Failed to repair JSON: {e}")
-                         raise e
-            else:
-                 spec = BaseSecondOrderGenome.model_validate_json(content)
-            
-            # Validate coverage
-            if not spec.learner.Omega.biases:
-                logger.warning("Omega component is empty! LLM failed to generate optimizer biases.")
-                # We could retry here, or just let it slide (but user complained).
-                # Ideally we raise error so the system (if loop existed) could retry.
-                # But currently no retry loop in agent.
-                # Let's add a default if empty? Or just log.
-                pass
-            _assign_bias_ids(spec)
-            # Enrich with system fields
-            return SecondOrderGenome(
-                genome_version=0.1,
-                genome_id="genome_0",
-                island_id=first_order_plan.island_id,
-                generation=0,
-                parent_id=None,
-                fitness=None,
-                **spec.model_dump()
-            )
-
-        raise ValueError("Failed to generate SecondOrderGenome")
+        if not response or not response.content:
+            raise ValueError("Failed to generate SecondOrderGenome")
+        
+        try:
+            spec = _parse_structured_output(response.content, BaseSecondOrderGenome)
+        except Exception as e:
+            logger.error(f"Failed to parse SecondOrderGenome: {e}")
+            raise
+        
+        if not spec.learner.Omega.biases:
+            logger.warning("Omega component is empty - LLM failed to generate optimizer biases")
+        
+        _assign_bias_ids(spec)
+        return SecondOrderGenome(
+            genome_version=0.1,
+            genome_id="genome_0",
+            island_id=first_order_plan.island_id,
+            generation=0,
+            parent_id=None,
+            fitness=None,
+            **spec.model_dump()
+        )
 
 
 class DesignMutator:
+    """Mutates genome designs using diff-based edits."""
+    
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
@@ -204,10 +196,10 @@ class DesignMutator:
         first_order_plan: Optional[str] = None,
         artifact_dir: Optional[str] = None,
     ) -> SecondOrderGenome:
+        """Mutate a specific component of the genome."""
         
-        # Use JSON for consistency with other agents, preserving logic
-        # Use BaseSecondOrderGenome for inspirations to hide system fields
         def _format_inspirations(label: str, inspirations: List[Program]) -> str:
+            """Format inspiration programs for the prompt."""
             if not inspirations:
                 return f"{label}: none"
             blocks = []
@@ -220,30 +212,22 @@ class DesignMutator:
                 except Exception:
                     genome_json = prog.genome
                 blocks.append(
-                    "\n".join(
-                        [
-                            f"- id: {prog.id}",
-                            f"  generation: {prog.generation}",
-                            f"  island: {prog.island_idx}",
-                            f"  combined_score: {prog.combined_score}",
-                            f"  public_metrics: {prog.public_metrics}",
-                            "  genome:",
-                            genome_json,
-                        ]
-                    )
+                    "\n".join([
+                        f"- id: {prog.id}",
+                        f"  generation: {prog.generation}",
+                        f"  island: {prog.island_idx}",
+                        f"  combined_score: {prog.combined_score}",
+                        f"  public_metrics: {prog.public_metrics}",
+                        "  genome:",
+                        genome_json,
+                    ])
                 )
             return f"{label}:\n" + "\n\n".join(blocks) if blocks else f"{label}: none"
 
-        insp_str = "\n\n".join(
-            [
-                _format_inspirations(
-                    "Archive inspirations (random/novelty)", archive_inspirations
-                ),
-                _format_inspirations(
-                    "Top-k inspirations (highest fitness)", top_k_inspirations
-                ),
-            ]
-        )
+        insp_str = "\n\n".join([
+            _format_inspirations("Archive inspirations (random/novelty)", archive_inspirations),
+            _format_inspirations("Top-k inspirations (highest fitness)", top_k_inspirations),
+        ])
         
         base_parent = BaseSecondOrderGenome(**parent_genome.model_dump())
         
@@ -263,10 +247,12 @@ class DesignMutator:
         
         Please provide a mutated version of the genome using SEARCH/REPLACE blocks.
         """
+        
         response = None
         try:
             response = self.llm.query(msg=user_msg, system_msg=DESIGN_MUTATOR_SYS_PROMPT)
         finally:
+            # Save mutation log if artifact_dir provided
             if artifact_dir:
                 try:
                     Path(artifact_dir).mkdir(parents=True, exist_ok=True)
@@ -280,48 +266,34 @@ class DesignMutator:
                         )
                 except Exception as e:
                     logger.warning(f"Failed to save mutation log: {e}")
-        if response and response.content:
-             # Apply the diff to the partial JSON string
-             # The existing diff logic works on text, so it handles JSON strings fine
-             patched_json = self._apply_diff(base_parent.model_dump_json(indent=2), response.content)
-             
-             # Clean up potential artifacts if diff wasn't perfect.
-             new_spec = BaseSecondOrderGenome.model_validate_json(patched_json)
-             
-             # Reconstruct full genome with parent's system fields
-             # Note: Typically mutation might imply a new ID or generation, but that logic might be external.
-             # We preserve parent's ID/Island etc. for now as per "enrich after/before based on hard data" logic.
-             _assign_bias_ids(new_spec)
-             return SecondOrderGenome(
-                 genome_version=parent_genome.genome_version,
-                 genome_id=parent_genome.genome_id,
-                 island_id=parent_genome.island_id,
-                 parent_id=parent_genome.parent_id,
-                 generation=parent_genome.generation,
-                 fitness=parent_genome.fitness,
-                 **new_spec.model_dump()
-             )
-        raise ValueError("Failed to mutate genome")
-
-    def _apply_diff(self, original_text: str, diff_text: str) -> str:
-        # Simple regex based patch application
-        # This mirrors shinka logic simplified
-        pattern = re.compile(
-            r"(?:<DIFF>)?\s*<{7}\s*SEARCH\s*\n(.*?)\n\s*={7}\s*\n(.*?)\n\s*>{7}(?:\s*REPLACE)?\s*(?:</DIFF>)?",
-            re.DOTALL,
-        )
-        matches = pattern.findall(diff_text)
         
-        patched_text = original_text
-        for search_block, replace_block in matches:
-            if search_block in patched_text:
-                patched_text = patched_text.replace(search_block, replace_block, 1)
-            else:
-                logger.warning(f"Could not find search block: {search_block[:50]}...")
-        return patched_text
+        if not response or not response.content:
+            raise ValueError("Failed to mutate genome")
+        
+        # Apply diff to parent genome JSON
+        patched_json = _apply_diff(base_parent.model_dump_json(indent=2), response.content)
+        
+        try:
+            new_spec = BaseSecondOrderGenome.model_validate_json(patched_json)
+        except Exception as e:
+            logger.error(f"Failed to parse mutated genome: {e}")
+            raise
+        
+        _assign_bias_ids(new_spec)
+        return SecondOrderGenome(
+            genome_version=parent_genome.genome_version,
+            genome_id=parent_genome.genome_id,
+            island_id=parent_genome.island_id,
+            parent_id=parent_genome.parent_id,
+            generation=parent_genome.generation,
+            fitness=parent_genome.fitness,
+            **new_spec.model_dump()
+        )
 
 
 class ImplementationAgent:
+    """Translates genome specifications into PyTorch code."""
+    
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
@@ -335,8 +307,9 @@ class ImplementationAgent:
         artifact_dir: Optional[str] = None,
         eval_script_content: Optional[str] = None
     ) -> str:
+        """Generate code implementation for a genome specification."""
         
-        # Determine strict region based on component
+        # Determine region tags based on component
         region_tag_start = None
         region_tag_end = None
         
@@ -354,7 +327,7 @@ class ImplementationAgent:
         pre_context = ""
         post_context = ""
         
-        # Try to extract region
+        # Extract region if tags are specified
         if region_tag_start and region_tag_end:
             pattern = re.compile(f"({re.escape(region_tag_start)}.*?{re.escape(region_tag_end)})", re.DOTALL)
             match = pattern.search(parent_code)
@@ -364,9 +337,9 @@ class ImplementationAgent:
                 end_idx = match.end(1)
                 pre_context = parent_code[:start_idx]
                 post_context = parent_code[end_idx:]
-                logger.info(f"ImplementationAgent: Restricted editing to region {component} ({len(code_context)} chars)")
+                logger.info(f"Editing region {component} ({len(code_context)} chars)")
             else:
-                logger.warning(f"ImplementationAgent: Region tags {region_tag_start}... not found. fallback to full code.")
+                logger.warning(f"Region tags {region_tag_start}... not found, using full code")
 
         user_msg = f"""
         Target Genome Specification:
@@ -393,17 +366,17 @@ class ImplementationAgent:
                 user_msg += "\nModify the code region to match the new genome."
 
         if component == "Phi":
-            user_msg += "\n\nReminder: compute_metrics must not compute or return loss."
+            user_msg += "\n\nReminder: compute_metrics must not compute or return loss or fitness metrics."
         
-        # Add instruction if any errors present
         if previous_errors or (historical_errors and len(historical_errors) > 0):
-             user_msg += "\n\nCRITICAL: You MUST analyze the above errors. If they relate to your current task, ensure your implementation fixes or avoids them."
+             user_msg += "\n\nCRITICAL: You MUST analyze the above errors and fix or avoid them."
 
         formatted_sys_msg = IMPLEMENTATION_AGENT_SYS_PROMPT.format(component=component)
         response = None
         try:
             response = self.llm.query(msg=user_msg, system_msg=formatted_sys_msg)
         finally:
+            # Save implementation log if artifact_dir provided
             if artifact_dir:
                 try:
                     Path(artifact_dir).mkdir(parents=True, exist_ok=True)
@@ -418,93 +391,71 @@ class ImplementationAgent:
                 except Exception as e:
                     logger.warning(f"Failed to save implementation log: {e}")
 
-        if response and response.content:
-            logger.debug(f"ImplementationAgent Raw Response ({component}):\n{response.content}")
-            # Apply diff to the CONTEXT (partial code)
-            patched_context = self._apply_diff(code_context, response.content)
-            
-            # Reassemble
-            full_code = pre_context + patched_context + post_context
-            return full_code
-            
-        raise ValueError("Failed to generate implementation code")
-    
-    def _apply_diff(self, original_text: str, diff_text: str) -> str:
-        # Use robust regex handling for XML-like tags + git-style markers
-        # Matches: <DIFF> ... <<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE ... </DIFF>
-        # or just the git-markers if the model forgets validity of tags
-        pattern = re.compile(
-            r"(?:<DIFF>)?\s*<{7}\s*SEARCH\s*\n(.*?)\n\s*={7}\s*\n(.*?)\n\s*>{7}(?:\s*REPLACE)?\s*(?:</DIFF>)?",
-            re.DOTALL,
-        )
-        matches = pattern.findall(diff_text)
+        if not response or not response.content:
+            raise ValueError("Failed to generate implementation code")
         
-        patched_text = original_text
-        for search_block, replace_block in matches:
-            # Normalize line endings just in case
-            search_block = search_block.replace('\r\n', '\n')
-            replace_block = replace_block.replace('\r\n', '\n')
-            
-            if search_block.strip() == "":
-                continue
+        # Apply diff to code context
+        patched_context = _apply_diff(code_context, response.content)
+        
+        # Reassemble full code
+        full_code = pre_context + patched_context + post_context
+        return full_code
 
-            if search_block in patched_text:
-                patched_text = patched_text.replace(search_block, replace_block, 1)
-            else:
-                # Try simple fuzzy match or logging
-                logger.warning(f"ImplementationAgent: Could not find search block:\n{search_block}")
-                # Optional: fallback to stricter normalization comparison? 
-                
-        return patched_text
 
 class ReflectionWriter:
+    """Generates reflections comparing parent and child genomes."""
+    
     def __init__(self, llm_client: LLMClient):
         self.llm = llm_client
 
-    def reflect(self, genome: SecondOrderGenome, metrics: Dict[str, float]) -> SecondOrderGenome:
-        base_genome = BaseSecondOrderGenome(**genome.model_dump())
+    def reflect(
+        self,
+        parent_genome: SecondOrderGenome,
+        parent_metrics: Dict[str, Any],
+        child_genome: SecondOrderGenome,
+        child_metrics: Dict[str, Any]
+    ) -> SecondOrderGenome:
+        """
+        Generate a plain text reflection comparing parent and child genomes.
+        Returns the child genome with reflection stored in metadata.
+        """
+        parent_base = BaseSecondOrderGenome(**parent_genome.model_dump())
+        child_base = BaseSecondOrderGenome(**child_genome.model_dump())
+        
         user_msg = f"""
-        Genome:
-        {base_genome.model_dump_json(indent=2)}
+        Parent Genome:
+        {parent_base.model_dump_json(indent=2)}
         
-        Evaluation Metrics:
-        {metrics}
+        Parent Fitness/Metrics:
+        {parent_metrics}
         
-        Update the 'reflection' field for biases.
+        Child Genome (after mutation):
+        {child_base.model_dump_json(indent=2)}
+        
+        Child Fitness/Metrics:
+        {child_metrics}
+        
+        Write a reflection analyzing what changed and why.
         """
         
         response = self.llm.query(
             msg=user_msg, 
-            system_msg=REFLECTION_WRITER_SYS_PROMPT,
-            output_model=BaseSecondOrderGenome
+            system_msg=REFLECTION_WRITER_SYS_PROMPT
         )
         
-        if response and response.content:
-             logger.debug(f"ReflectionWriter Raw Response:\n{response.content}")
-             content = response.content
-             if "```json" in content:
-                 content = content.replace("```json", "").replace("```", "")
-             elif "```" in content:
-                 content = content.replace("```", "")
-             content = content.strip()
-             
-             try:
-                 new_spec = BaseSecondOrderGenome.model_validate_json(content)
-                 merged_spec = _merge_reflections(base_genome, new_spec)
-                 _assign_bias_ids(merged_spec)
-                 # Merge back
-                 return SecondOrderGenome(
-                    genome_version=genome.genome_version,
-                    genome_id=genome.genome_id,
-                    island_id=genome.island_id,
-                    parent_id=genome.parent_id,
-                    generation=genome.generation,
-                    fitness=genome.fitness,
-                    **merged_spec.model_dump()
-                 )
-             except Exception as e:
-                 logger.error(f"Failed to parse reflected genome JSON: {e}")
-                 logger.debug(f"Problematic JSON Content:\n{content}")
-                 # Return original genome without reflection updates
-                 logger.warning("Returning original genome without reflection updates")
-                 return genome
+        if not response or not response.content:
+            logger.warning("Reflection generation failed - no response from LLM")
+            return child_genome
+        
+        # Parse plain text reflection
+        reflection_text = response.content.strip()
+        
+        # Strip markdown if present
+        if "```" in reflection_text:
+            reflection_text = reflection_text.replace("```", "").strip()
+        
+        # Store reflection in child genome metadata
+        child_genome.metadata["reflection"] = reflection_text
+        logger.info("Reflection generated successfully")
+        
+        return child_genome

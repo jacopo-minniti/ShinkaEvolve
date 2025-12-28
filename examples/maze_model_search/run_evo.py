@@ -4,10 +4,10 @@ from shinka.launch import LocalJobConfig
 import os
 import logging
 
-# Configure logging to DEBUG level
+# Configure logging to INFO level
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    format='%(levelname)s - %(message)s',
     force=True
 )
 

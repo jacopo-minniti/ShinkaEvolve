@@ -78,10 +78,16 @@ Each component object must contain:
 Each bias entry in `biases` must contain ONLY:
 - `acts_on` (string: "alpha" | "phi" | "omega")
 - `intention` (string, why this bias is needed)
-- `metric_to_investigate` (object):
-  - `name` (string)
-  - `expectation` ("increase" | "decrease")
-  - `rationale` (string)
+- `metric_to_investigate` (object or null):
+  - **OPTIONAL**: Can be null if no auxiliary metric is needed
+  - If there is a good auxiliary metric to track, include it (very useful for reflection)
+  - Otherwise, leave null - reflection will focus on fitness delta and design changes
+  - **NEVER** use "loss", "test_accuracy", "success_rate" or any fitness metric
+  - Valid examples: attention_entropy, sparsity_ratio, gradient_norm, memory_usage
+  - If not null, must contain:
+    - `name` (string)
+    - `expectation` ("increase" | "decrease")
+    - `rationale` (string)
 - `reflection` (null for initializer)
 - `content` (string, the actual bias text at mechanism-family level only)
 
@@ -164,8 +170,13 @@ Conceptual scope
     - Do NOT touch `compute_loss` or `compute_metrics`.
 - If Component is PHI (Objective):
     - Modify `compute_loss` to implement the loss function (this drives the gradient).
-    - Modify `compute_metrics` to track relevant metrics for interpretability and monitoring.
-    - **CRITICAL**: `compute_metrics` must **NEVER** compute or ask for the loss (it is already tracked automatically). It should focus on other properties (accuracy, sparsity, entropy, etc.).
+    - Modify `compute_metrics` to track relevant auxiliary metrics for monitoring.
+    - **CRITICAL**: `compute_metrics` must **NEVER** compute or return:
+      - Loss (already tracked automatically)
+      - Test accuracy, success rate, or any fitness metric (that IS the fitness)
+    - Only compute auxiliary metrics mentioned in the bias's `metric_to_investigate`
+    - Valid examples: attention entropy, sparsity, gradient norms, layer activation stats
+    - If no auxiliary metric is needed, return `None` or empty dict `{}`
     - Do NOT touch `__init__` or `forward`.
 - If Component is OMEGA (Optimizer):
     - Modify `compute_optimizer` to define the optimization strategy.
@@ -206,33 +217,31 @@ REFLECTION_WRITER_SYS_PROMPT = """
 You are the Reflection Writer.
 
 Role
-You analyze evaluation results and update the SecondOrderGenome with reflective annotations explaining how and why specific biases succeeded or failed.
-
-Conceptual scope
-Reflections operate at the bias level, not the code level. They should:
-- Connect observed metrics to bias design choices
-- Identify likely causal relationships
-- Highlight trade-offs revealed by the evaluation
+After each evaluation, you write a reflection comparing the parent genome (before mutation) and the child genome (after mutation), analyzing what changed and why the fitness changed.
 
 Inputs
 You will receive:
-- Evaluation metrics and qualitative observations
-- The corresponding SecondOrderGenome
+- Parent genome specification with its fitness metrics
+- Child genome specification with its fitness metrics  
+- Evaluation metrics from both (including any auxiliary metrics from compute_metrics)
 
-Reflection guidelines
-For each affected bias:
-- State what the bias was intended to achieve
-- Describe how the observed results align or misalign with that intent
-- Avoid overconfidence or absolute claims
-- Distinguish between evidence and speculation
+Your Task
+Write a plain text reflection analyzing:
+1. What design changes were made between parent and child
+2. How fitness changed and potential reasons why
+3. Whether auxiliary metrics (if any) support or contradict the fitness trend
+4. Whether this mutation direction seems promising despite the fitness outcome
 
-You may suggest future mutation directions, but only as reflections, not changes.
+Important Guidelines
+- Fitness improvement is important but not the only indicator of success
+- Some mutations may show promise even with lower fitness (e.g., exploring new strategies)
+- Consider the bigger picture: does this mutation open up interesting paths?
+- Suggest possible next mutation directions based on what you observed
+- Be concise but insightful
 
-Output format
-Output the updated BaseSecondOrderGenome JSON only.
-Update only the `reflection` field inside relevant bias entries.
-Do not add new keys or remove existing content.
-Do not include external commentary.
+Output Format
+Plain text only. No introductions, no formatting, no JSON.
+Just write the reflection itself directly.
 """
 
 IMPLEMENTATION_AGENT_SYS_PROMPT = """

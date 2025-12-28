@@ -574,14 +574,31 @@ class EvolutionRunner:
 
         # Reflection (if correct or final failure)
         genome = SecondOrderGenome.model_validate_json(job.genome_yaml)
+        
+        # Populate fitness in genome from evaluation results
         if results and results.get("metrics"):
-             try:
-                 # Optional: Save reflection log
-                 genome = self.reflection_writer.reflect(genome, results.get("metrics", {}).get("public", {}))
-                 logger.info("Reflection completed successfully")
-             except Exception as e:
-                 logger.error(f"Reflection failed: {e}. Continuing with original genome.")
-                 # genome remains unchanged, which is fine - we still save it to DB
+            genome.fitness = results.get("metrics", {})
+            
+            # Generate reflection comparing parent and child
+            if job.parent_id:
+                try:
+                    parent_prog = self.db.get_program(job.parent_id)
+                    if parent_prog and parent_prog.genome:
+                        parent_genome = SecondOrderGenome.model_validate_json(parent_prog.genome)
+                        parent_metrics = parent_prog.public_metrics or {}
+                        child_metrics = results.get("metrics", {}).get("public", {})
+                        
+                        genome = self.reflection_writer.reflect(
+                            parent_genome=parent_genome,
+                            parent_metrics=parent_metrics,
+                            child_genome=genome,
+                            child_metrics=child_metrics
+                        )
+                        logger.info("Reflection completed successfully")
+                except Exception as e:
+                    logger.error(f"Reflection failed: {e}. Continuing without reflection.")
+            else:
+                logger.info("Skipping reflection for initial genome (no parent)")
         
         self._save_result_to_db(results, rtime, code, genome, job.parent_id, job.generation)
 
