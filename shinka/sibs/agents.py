@@ -1,6 +1,7 @@
 import logging
 import re
 from pathlib import Path
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from shinka.llm.llm import LLMClient
 from shinka.sibs.schema import FirstOrderBiasPlan, SecondOrderGenome, FirstOrderBiasSpec, BaseSecondOrderGenome
@@ -160,21 +161,64 @@ class SecondOrderInitializer:
         if not response or not response.content:
             raise ValueError("Failed to generate SecondOrderGenome")
         
+        logger.info(f"SecondOrderInitializer received response of length {len(response.content)}")
+        
         try:
             spec = _parse_structured_output(response.content, BaseSecondOrderGenome)
         except Exception as e:
             logger.error(f"Failed to parse SecondOrderGenome: {e}")
             raise
         
+        # Check for empty Omega and provide default if needed
         if not spec.learner.Omega.biases:
-            error_msg = (
-                "Omega component is empty - LLM failed to generate optimizer biases. "
-                "This is required. Please check the prompt and LLM output."
+            logger.error("=" * 80)
+            logger.error("OMEGA BIASES MISSING - LLM FAILED TO GENERATE OPTIMIZER BIASES")
+            logger.error("=" * 80)
+            logger.error(f"Alpha biases: {len(spec.learner.Alpha.biases)}")
+            logger.error(f"Phi biases: {len(spec.learner.Phi.biases)}")
+            logger.error(f"Omega biases: {len(spec.learner.Omega.biases)} (EMPTY!)")
+            
+            # Save the problematic response for debugging
+            debug_dir = Path("debug_omega_failures")
+            debug_dir.mkdir(exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            debug_file = debug_dir / f"omega_missing_{timestamp}.txt"
+            
+            with open(debug_file, "w", encoding="utf-8") as f:
+                f.write("=" * 80 + "\n")
+                f.write("OMEGA BIASES MISSING - DIAGNOSTIC REPORT\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(f"Timestamp: {timestamp}\n")
+                f.write(f"Response length: {len(response.content)} chars\n\n")
+                f.write("=" * 80 + "\n")
+                f.write("FULL LLM RESPONSE:\n")
+                f.write("=" * 80 + "\n")
+                f.write(response.content)
+                f.write("\n\n")
+                f.write("=" * 80 + "\n")
+                f.write("PARSED SPEC (what we got):\n")
+                f.write("=" * 80 + "\n")
+                f.write(spec.model_dump_json(indent=2))
+                
+            logger.error(f"Saved diagnostic info to: {debug_file}")
+            logger.error("Review this file to understand why Omega wasn't generated")
+            logger.info("Adding default Omega bias to allow system to continue")
+            
+            # Add a default Omega bias
+            from shinka.sibs.schema import BiasEntry
+            default_omega = BiasEntry(
+                acts_on="Omega",
+                intention="Default optimizer configuration for stable training",
+                metric_to_investigate=None,
+                reflection=None,
+                content="Use Adam optimizer with standard learning rate for reliable convergence"
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            spec.learner.Omega.biases = [default_omega]
+            spec.learner.Omega.summary = "Default optimizer configuration (LLM failed to generate)"
         
         _assign_bias_ids(spec)
+        logger.info(f"SecondOrderGenome created with {len(spec.learner.Alpha.biases)} Alpha, {len(spec.learner.Phi.biases)} Phi, {len(spec.learner.Omega.biases)} Omega biases")
+        
         return SecondOrderGenome(
             genome_version=0.1,
             genome_id="genome_0",
