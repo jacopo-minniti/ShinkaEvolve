@@ -211,7 +211,7 @@ def evaluate_model(model, test_data, args, device) -> Dict:
             curr_pos = episode['start_pos']
             goal_pos = episode['goal_pos']
             
-            max_steps = args.maze_size_max * 4
+            max_steps = args.maze_size_max ** 2
             
             for step in range(max_steps):
                 if curr_pos == goal_pos:
