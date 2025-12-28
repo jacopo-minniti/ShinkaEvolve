@@ -27,5 +27,18 @@ class EvolvedModel(nn.Module):
         outputs: result of forward(batch['obs'])
         """
         return F.cross_entropy(outputs, batch['target'])
+    
+    def compute_metrics(self, batch, outputs):
+        """
+        Computes auxiliary metrics for monitoring (not loss or fitness).
+        Return None if no auxiliary metrics are needed.
+        """
+        return None
+    
+    def compute_optimizer(self):
+        """
+        Returns the optimizer for training.
+        """
+        return torch.optim.Adam(self.parameters(), lr=1e-3)
 
 # EVOLVE-BLOCK-END

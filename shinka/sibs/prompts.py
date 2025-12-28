@@ -102,6 +102,9 @@ Include at least:
 - **1 bias** in phi (must specify the loss family at a high level)
 - **1 bias** in omega (must specify the optimizer family at a high level)
 
+**CRITICAL**: The omega component is MANDATORY. You MUST include at least one optimizer bias.
+If you fail to generate omega biases, the system will reject your output.
+
 ## Output rules
 - Output **JSON only**. No Markdown. No extra keys. No code.
 - Do not contradict the FirstOrderBiasPlan. If there is ambiguity, choose a conservative, standard design and note it in `high_level_description`.

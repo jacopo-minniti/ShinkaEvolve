@@ -582,7 +582,7 @@ class EvolutionRunner:
             # Generate reflection comparing parent and child
             if job.parent_id:
                 try:
-                    parent_prog = self.db.get_program(job.parent_id)
+                    parent_prog = self.db.get(job.parent_id)
                     if parent_prog and parent_prog.genome:
                         parent_genome = SecondOrderGenome.model_validate_json(parent_prog.genome)
                         parent_metrics = parent_prog.public_metrics or {}

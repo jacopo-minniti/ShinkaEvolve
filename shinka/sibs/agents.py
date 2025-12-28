@@ -167,7 +167,12 @@ class SecondOrderInitializer:
             raise
         
         if not spec.learner.Omega.biases:
-            logger.warning("Omega component is empty - LLM failed to generate optimizer biases")
+            error_msg = (
+                "Omega component is empty - LLM failed to generate optimizer biases. "
+                "This is required. Please check the prompt and LLM output."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         
         _assign_bias_ids(spec)
         return SecondOrderGenome(
@@ -366,7 +371,12 @@ class ImplementationAgent:
                 user_msg += "\nModify the code region to match the new genome."
 
         if component == "Phi":
-            user_msg += "\n\nReminder: compute_metrics must not compute or return loss or fitness metrics."
+            user_msg += (
+                "\n\nCRITICAL REMINDER for Phi component:\n"
+                "- compute_metrics must NEVER return 'loss' (already tracked)\n"
+                "- compute_metrics must NEVER return 'test_accuracy' or 'success_rate' (that IS the fitness)\n"
+                "- ONLY return auxiliary metrics from metric_to_investigate, or return None/empty dict\n"
+            )
         
         if previous_errors or (historical_errors and len(historical_errors) > 0):
              user_msg += "\n\nCRITICAL: You MUST analyze the above errors and fix or avoid them."
