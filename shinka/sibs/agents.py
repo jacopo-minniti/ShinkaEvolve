@@ -438,6 +438,7 @@ class ImplementationAgent:
                 user_msg += "\nModify the code region to match the new genome."
 
         if component == "Phi":
+            user_msg += (
                 "\n\nCRITICAL REMINDER for Phi component:\n"
                 "- compute_metrics must NEVER return 'loss' (already tracked)\n"
                 "- compute_metrics must NEVER return 'test_accuracy' or 'success_rate' (that IS the fitness)\n"
