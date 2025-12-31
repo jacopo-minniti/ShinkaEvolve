@@ -572,33 +572,42 @@ class EvolutionRunner:
                 logger.error(f"Repair failed: {e}")
                 # Fall through to save as failed
 
-        # Reflection (if correct or final failure)
+        # Reflection Logic
+        # We attempt reflection regardless of success, to capture why it failed or succeeded.
         genome = SecondOrderGenome.model_validate_json(job.genome_yaml)
         
-        # Populate fitness in genome from evaluation results
+        # Populate fitness in genome if available
         if results and results.get("metrics"):
             genome.fitness = results.get("metrics", {})
             
-            # Generate reflection comparing parent and child
-            if job.parent_id:
-                try:
-                    parent_prog = self.db.get(job.parent_id)
-                    if parent_prog and parent_prog.genome:
-                        parent_genome = SecondOrderGenome.model_validate_json(parent_prog.genome)
-                        parent_metrics = parent_prog.public_metrics or {}
+        # Attempt Reflection
+        if job.parent_id:
+            try:
+                parent_prog = self.db.get(job.parent_id)
+                if parent_prog and parent_prog.genome:
+                    parent_genome = SecondOrderGenome.model_validate_json(parent_prog.genome)
+                    parent_metrics = parent_prog.public_metrics or {}
+                    
+                    # If results check failed or metrics missing, use empty dicts
+                    child_metrics = {}
+                    if results and results.get("metrics"):
                         child_metrics = results.get("metrics", {}).get("public", {})
-                        
-                        genome = self.reflection_writer.reflect(
-                            parent_genome=parent_genome,
-                            parent_metrics=parent_metrics,
-                            child_genome=genome,
-                            child_metrics=child_metrics
-                        )
-                        logger.info("Reflection completed successfully")
-                except Exception as e:
-                    logger.error(f"Reflection failed: {e}. Continuing without reflection.")
-            else:
-                logger.info("Skipping reflection for initial genome (no parent)")
+                    
+                    # Add stderr to child metrics if failed, so reflection sees the error!
+                    if not correct:
+                         child_metrics["_error_log"] = stderr_log[:1000] # Truncate for prompt context
+                    
+                    genome = self.reflection_writer.reflect(
+                        parent_genome=parent_genome,
+                        parent_metrics=parent_metrics,
+                        child_genome=genome,
+                        child_metrics=child_metrics
+                    )
+                    logger.info("Reflection completed successfully")
+            except Exception as e:
+                logger.error(f"Reflection failed: {e}. Continuing without reflection.")
+        else:
+            logger.info("Skipping reflection for initial genome (no parent)")
         
         self._save_result_to_db(results, rtime, code, genome, job.parent_id, job.generation)
 

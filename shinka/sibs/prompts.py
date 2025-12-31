@@ -123,7 +123,10 @@ A mutation is a *local, intentional change* to one component of the genome:
 - Omega (Optimizer): Optimization algorithms, learning rates, schedules, gradient handling.
 
 Mutations should be:
-- Minimal but meaningful (avoid changing everything at once).
+- **Meaningful**: Avoid trivial rephrasing. Changes should be concrete or reflect a philosophical shift in the inductive bias.
+- **Context-Aware Magnitude**: 
+  - If the parent is high-performing, favor **refinements** (tuning, small structural tweaks).
+  - If the parent is stagnating or low-performing, favor **exploration** (larger architectural shifts, new loss paradigms).
 - Aligned with the FIRST ORDER BIAS INTENT (traceability).
 - Easy to attribute during evaluation.
 

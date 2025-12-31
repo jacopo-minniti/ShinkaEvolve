@@ -274,8 +274,8 @@ class DesignMutator:
             return f"{label}:\n" + "\n\n".join(blocks) if blocks else f"{label}: none"
 
         insp_str = "\n\n".join([
-            _format_inspirations("Archive inspirations (random/novelty)", archive_inspirations),
-            _format_inspirations("Top-k inspirations (highest fitness)", top_k_inspirations),
+            _format_inspirations("Contextual Inspirations (Elites & Random from Archive)", archive_inspirations),
+            _format_inspirations("Global Top-K Inspirations (Excluding Context)", top_k_inspirations),
         ])
         
         base_parent = BaseSecondOrderGenome(**parent_genome.model_dump())
