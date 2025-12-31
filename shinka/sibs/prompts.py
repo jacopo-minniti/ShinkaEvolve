@@ -127,6 +127,10 @@ Mutations should be:
 - **Context-Aware Magnitude**: 
   - If the parent is high-performing, favor **refinements** (tuning, small structural tweaks).
   - If the parent is stagnating or low-performing, favor **exploration** (larger architectural shifts, new loss paradigms).
+- **Specificity & Detail**:
+  - The `rationale` and `description` fields should be **specific and detailed**.
+  - **Do not limit yourself to single sentences.** You are encouraged to write **paragraphs** explaining the "why" and "how" of the mutation.
+  - Avoid vague motivation like "improve performance". Instead, explain *what particular behavior* or *mechanism* you are targeting.
 - Aligned with the FIRST ORDER BIAS INTENT (traceability).
 - Easy to attribute during evaluation.
 
@@ -134,7 +138,7 @@ Inputs
 You will receive:
 - A Parent Genome (BaseSecondOrderGenome) in JSON format.
 - An instruction specifying which component to mutate (Alpha, Omega, or Phi).
-- Optionally, inspiration genomes or a motivation for the mutation.
+- Inspiration genomes or a motivation for the mutation.
 
 Rules
 - Modify ONLY the requested component.

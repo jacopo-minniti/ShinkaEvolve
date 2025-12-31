@@ -601,7 +601,8 @@ class EvolutionRunner:
                         parent_genome=parent_genome,
                         parent_metrics=parent_metrics,
                         child_genome=genome,
-                        child_metrics=child_metrics
+                        child_metrics=child_metrics,
+                        artifact_dir=job.job_dir
                     )
                     logger.info("Reflection completed successfully")
             except Exception as e:
@@ -609,15 +610,16 @@ class EvolutionRunner:
         else:
             logger.info("Skipping reflection for initial genome (no parent)")
         
-        self._save_result_to_db(results, rtime, code, genome, job.parent_id, job.generation)
+        self._save_result_to_db(results, rtime, code, genome, job.parent_id, job.generation, job_dir=job.job_dir)
 
 
-    def _save_result_to_db(self, results, rtime, code, genome, parent_id, generation, island_idx=None):
+    def _save_result_to_db(self, results, rtime, code, genome, parent_id, generation, island_idx=None, job_dir=None):
         metrics_val = results.get("metrics", {}) if results else {}
         correct_val = results.get("correct", {}).get("correct", False) if results else False
         
+        program_id = str(uuid.uuid4())
         db_program = Program(
-            id=str(uuid.uuid4()),
+            id=program_id,
             code=code,
             language="python",
             parent_id=parent_id,
@@ -640,7 +642,45 @@ class EvolutionRunner:
         )
         self.db.add(db_program, verbose=True)
         self.db.save()
-        self._update_best_solution()
+        self._update_best_solution(candidate_id=program_id, candidate_dir=job_dir)
+
+    def _update_best_solution(self, candidate_id: Optional[str] = None, candidate_dir: Optional[str] = None):
+         """Check if the candidate is the new global best and save artifacts if so."""
+         best_prog = self.db.get_best_program(correct_only=True)
+         
+         if not best_prog:
+             return
+
+         # If we have a new best program (or first one)
+         if best_prog.id != self.best_program_id:
+             self.best_program_id = best_prog.id
+             logger.info(f"Global Best Program Updated: {best_prog.id} (Score: {best_prog.combined_score})")
+             
+             # If the new best is the candidate we just added, copy its files
+             if candidate_id and candidate_dir and best_prog.id == candidate_id:
+                 try:
+                     best_dir = Path(self.results_dir) / "best"
+                     # Clean previous best
+                     if best_dir.exists():
+                         shutil.rmtree(best_dir)
+                     best_dir.mkdir(parents=True, exist_ok=True)
+                     
+                     # Copy content of job dir to best dir
+                     shutil.copytree(candidate_dir, best_dir, dirs_exist_ok=True)
+                     logger.info(f"Copied artifacts of best program to {best_dir}")
+                     
+                     # Add a metadata file about the best program
+                     with open(best_dir / "best_program_info.json", "w") as f:
+                         info = {
+                             "id": best_prog.id,
+                             "score": best_prog.combined_score,
+                             "generation": best_prog.generation,
+                             "metrics": best_prog.public_metrics
+                         }
+                         json.dump(info, f, indent=2)
+                         
+                 except Exception as e:
+                     logger.error(f"Failed to copy best program artifacts: {e}")
 
     def _update_completed_generations(self):
         last_gen = self.db.last_iteration
@@ -657,18 +697,4 @@ class EvolutionRunner:
                 break
         self.completed_generations = completed
 
-    def _update_best_solution(self):
-         # Standard logic
-         pass # Simplified for brevity, original logic can remain if needed or re-implemented
-         # But I am overwriting the file, so I should implement it.
-         best_programs = self.db.get_top_programs(n=1, correct_only=True)
-         if best_programs:
-            bp = best_programs[0]
-            if bp.id != self.best_program_id:
-                self.best_program_id = bp.id
-                best_dir = Path(self.results_dir) / "best"
-                if best_dir.exists(): shutil.rmtree(best_dir)
-                # Copy from results_dir/gen_X/main_... ??
-                # Actually, finding the file on disk might be tricky if we use uuids.
-                # Just saving logic is enough.
-                logger.info(f"New Best Program: {bp.id}")
+

@@ -178,30 +178,8 @@ class SecondOrderInitializer:
             logger.error(f"Phi biases: {len(spec.learner.Phi.biases)}")
             logger.error(f"Omega biases: {len(spec.learner.Omega.biases)} (EMPTY!)")
             
-            # Save the problematic response for debugging
-            debug_dir = Path("debug_omega_failures")
-            debug_dir.mkdir(exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            debug_file = debug_dir / f"omega_missing_{timestamp}.txt"
-            
-            with open(debug_file, "w", encoding="utf-8") as f:
-                f.write("=" * 80 + "\n")
-                f.write("OMEGA BIASES MISSING - DIAGNOSTIC REPORT\n")
-                f.write("=" * 80 + "\n\n")
-                f.write(f"Timestamp: {timestamp}\n")
-                f.write(f"Response length: {len(response.content)} chars\n\n")
-                f.write("=" * 80 + "\n")
-                f.write("FULL LLM RESPONSE:\n")
-                f.write("=" * 80 + "\n")
-                f.write(response.content)
-                f.write("\n\n")
-                f.write("=" * 80 + "\n")
-                f.write("PARSED SPEC (what we got):\n")
-                f.write("=" * 80 + "\n")
-                f.write(spec.model_dump_json(indent=2))
-                
-            logger.error(f"Saved diagnostic info to: {debug_file}")
-            logger.error("Review this file to understand why Omega wasn't generated")
+            # Debug logging removed as per user request
+            logger.error("OMEGA BIASES MISSING - LLM FAILED TO GENERATE OPTIMIZER BIASES")
             logger.info("Adding default Omega bias to allow system to continue")
             
             # Add a default Omega bias
@@ -467,7 +445,8 @@ class ReflectionWriter:
         parent_genome: SecondOrderGenome,
         parent_metrics: Dict[str, Any],
         child_genome: SecondOrderGenome,
-        child_metrics: Dict[str, Any]
+        child_metrics: Dict[str, Any],
+        artifact_dir: Optional[str] = None
     ) -> SecondOrderGenome:
         """
         Generate a plain text reflection comparing parent and child genomes.
@@ -492,10 +471,26 @@ class ReflectionWriter:
         Write a reflection analyzing what changed and why.
         """
         
-        response = self.llm.query(
-            msg=user_msg, 
-            system_msg=REFLECTION_WRITER_SYS_PROMPT
-        )
+        response = None
+        try:
+             response = self.llm.query(
+                msg=user_msg, 
+                system_msg=REFLECTION_WRITER_SYS_PROMPT
+            )
+        finally:
+             if artifact_dir:
+                try:
+                    Path(artifact_dir).mkdir(parents=True, exist_ok=True)
+                    log_path = Path(artifact_dir) / "reflection_log.md"
+                    with open(log_path, "w", encoding="utf-8") as f:
+                        f.write(
+                            "# Reflection Log\n\n"
+                            f"## System Message\n{REFLECTION_WRITER_SYS_PROMPT}\n\n"
+                            f"## User Message\n{user_msg}\n\n"
+                            f"## Response\n{response.content if response else 'NO RESPONSE'}\n"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to save reflection log: {e}")
         
         if not response or not response.content:
             logger.warning("Reflection generation failed - no response from LLM")
