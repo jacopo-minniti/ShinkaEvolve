@@ -188,7 +188,6 @@ class SecondOrderInitializer:
                 acts_on="Omega",
                 intention="Default optimizer configuration for stable training",
                 metric_to_investigate=None,
-                reflection=None,
                 content="Use Adam optimizer with standard learning rate for reliable convergence"
             )
             spec.learner.Omega.biases = [default_omega]
@@ -261,6 +260,9 @@ class DesignMutator:
         user_msg = f"""
         Parent Genome:
         {base_parent.model_dump_json(indent=2)}
+        
+        Parent Reflection (Previous Step Analysis):
+        {parent_genome.reflection or "None"}
         
         Component to Mutate: {component_to_mutate}
         """
@@ -340,6 +342,19 @@ class ImplementationAgent:
         region_tag_start = None
         region_tag_end = None
         
+        # Check if we need to investigate metrics (requires editing REGION_METRICS)
+        # We need to scan the genome component to see if metric_to_investigate is set
+        has_metric_investigation = False
+        comp_obj = getattr(genome.learner, component, None) if component != "All" else None
+        if comp_obj and comp_obj.biases:
+             for bias in comp_obj.biases:
+                 if bias.metric_to_investigate:
+                     has_metric_investigation = True
+                     break
+        
+        region_metrics_start = "# REGION_METRICS_START"
+        region_metrics_end = "# REGION_METRICS_END"
+        
         if component == "Alpha":
             region_tag_start = "# REGION_ALPHA_START"
             region_tag_end = "# REGION_ALPHA_END"
@@ -354,25 +369,55 @@ class ImplementationAgent:
         pre_context = ""
         post_context = ""
         
-        # Extract region if tags are specified
-        if region_tag_start and region_tag_end:
-            pattern = re.compile(f"({re.escape(region_tag_start)}.*?{re.escape(region_tag_end)})", re.DOTALL)
-            match = pattern.search(parent_code)
-            if match:
-                code_context = match.group(1)
-                start_idx = match.start(1)
-                end_idx = match.end(1)
-                pre_context = parent_code[:start_idx]
-                post_context = parent_code[end_idx:]
-                logger.info(f"Editing region {component} ({len(code_context)} chars)")
-            else:
-                logger.warning(f"Region tags {region_tag_start}... not found, using full code")
+        # Helper to extract a region
+        def _get_region(code, start_tag, end_tag):
+             pattern = re.compile(f"({re.escape(start_tag)}.*?{re.escape(end_tag)})", re.DOTALL)
+             match = pattern.search(code)
+             if match:
+                 return match.group(1)
+             return None
 
+        # Logic:
+        # If component is "All", we pass full code (code_context).
+        # If component is specific, we look for its region.
+        # IF component is specific AND has_metric_investigation is True, we pass BOTH regions.
+        
+        if component != "All":
+            target_region = _get_region(parent_code, region_tag_start, region_tag_end)
+            if target_region:
+                if has_metric_investigation:
+                    # Fetch metrics region too
+                    metrics_region = _get_region(parent_code, region_metrics_start, region_metrics_end)
+                    if metrics_region:
+                         code_context = f"{target_region}\n\n...\n\n{metrics_region}"
+                         logger.info(f"Editing regions {component} + Metrics")
+                    else:
+                         code_context = target_region
+                         logger.warning("Metrics region not found despite investigation request")
+                else:
+                    code_context = target_region
+                    logger.info(f"Editing region {component} ({len(code_context)} chars)")
+            else:
+                # If target region not found, fallback to full code? Or error?
+                # Fallback to full code is safer but modifies "All" essentially.
+                logger.warning(f"Region tags {region_tag_start}... not found, using full code")
+                code_context = parent_code
+        
+        # NOTE: Apply diff will apply to the FULL parent_code if we use _apply_diff(parent_code, diff).
+        # We generally construct the prompt with `code_context`.
+        # BUT we must apply the diff to `parent_code`.
+        # Previous logic was: split parent code into pre/post and apply to middle.
+        # That logic FAILs if we show disjoint regions.
+        # New strategy: Show the regions in the prompt.
+        # Apply the diff to the FULL PARENT CODE.
+        # This works because SEARCH blocks will find the unique context wherever it is.
+        # So we don't need pre_context/post_context splitting if we just apply to full file.
+        
         user_msg = f"""
         Target Genome Specification:
         {BaseSecondOrderGenome(**genome.model_dump()).model_dump_json(indent=2)}
         
-        Code Region to Modify:
+        Code Regions to Modify (You may see multiple disjoint regions separated by '...'):
         ```python
         {code_context}
         ```
@@ -393,11 +438,11 @@ class ImplementationAgent:
                 user_msg += "\nModify the code region to match the new genome."
 
         if component == "Phi":
-            user_msg += (
                 "\n\nCRITICAL REMINDER for Phi component:\n"
                 "- compute_metrics must NEVER return 'loss' (already tracked)\n"
                 "- compute_metrics must NEVER return 'test_accuracy' or 'success_rate' (that IS the fitness)\n"
                 "- ONLY return auxiliary metrics from metric_to_investigate, or return None/empty dict\n"
+                "- If metric_to_investigate is set, you MUST modify compute_metrics in REGION_METRICS.\n"
             )
         
         if previous_errors or (historical_errors and len(historical_errors) > 0):
@@ -426,12 +471,11 @@ class ImplementationAgent:
         if not response or not response.content:
             raise ValueError("Failed to generate implementation code")
         
-        # Apply diff to code context
-        patched_context = _apply_diff(code_context, response.content)
+        # Apply diff to FULL CODE
+        # Using full parent_code because SEARCH blocks will locate the correct regions
+        patched_code = _apply_diff(parent_code, response.content)
         
-        # Reassemble full code
-        full_code = pre_context + patched_context + post_context
-        return full_code
+        return patched_code
 
 
 class ReflectionWriter:
@@ -515,8 +559,9 @@ class ReflectionWriter:
                 user_msg, response.content, "TOO_SHORT"
             )
         
-        # Store reflection in child genome metadata
-        child_genome.metadata["reflection"] = reflection_text
+        # Store reflection in child genome (top-level)
+        child_genome.reflection = reflection_text
+        # child_genome.metadata["reflection"] = reflection_text # Deprecated
         logger.info(f"Reflection generated successfully ({len(reflection_text)} chars)")
         
         return child_genome

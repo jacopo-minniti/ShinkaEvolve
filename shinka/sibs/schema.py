@@ -28,7 +28,6 @@ class BiasEntry(BaseModel):
     acts_on: str # "Alpha", "Omega", "Phi"
     intention: str
     metric_to_investigate: Optional[MetricToInvestigate] = None
-    reflection: Optional[str] = None
     content: str = "" # The actual second-order bias text
 
 class ComponentParams(BaseModel):
@@ -53,5 +52,7 @@ class SecondOrderGenome(BaseSecondOrderGenome):
     island_id: int = 0
     parent_id: Optional[str] = None
     generation: int = 0
+    generation: int = 0
     fitness: Optional[Dict[str, Any]] = None  # Stores full metrics after evaluation
-    metadata: Dict[str, Any] = Field(default_factory=dict)  # Stores reflection and other metadata
+    reflection: Optional[str] = None # Reflection on the genome performance
+    metadata: Dict[str, Any] = Field(default_factory=dict)  # Stores other metadata

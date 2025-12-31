@@ -47,10 +47,14 @@ class EvolvedModel(nn.Module):
     def compute_loss(self, batch, outputs):
         # TODO: Implement loss computation
         return torch.tensor(0.0, requires_grad=True)
-
-    def compute_metrics(self, batch, outputs):
-        return {"test_accuracy": 0.0}
 # REGION_PHI_END
+
+# REGION_METRICS_START
+    def compute_metrics(self, batch, outputs):
+        # TODO: Implement behavioral metrics (independent of fitness)
+        # return {"metric_name": value}
+        return {}
+# REGION_METRICS_END
 
 # REGION_OMEGA_START
     def compute_optimizer(self):

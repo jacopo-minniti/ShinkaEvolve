@@ -139,6 +139,7 @@ You will receive:
 - A Parent Genome (BaseSecondOrderGenome) in JSON format.
 - An instruction specifying which component to mutate (Alpha, Omega, or Phi).
 - Inspiration genomes or a motivation for the mutation.
+- **Parent Reflection**: Analysis of the previous step (use this to guide your decision!).
 
 Rules
 - Modify ONLY the requested component.
@@ -227,7 +228,7 @@ REFLECTION_WRITER_SYS_PROMPT = """
 You are the Reflection Writer.
 
 Role
-After each evaluation, you write a reflection comparing the parent genome (before mutation) and the child genome (after mutation), analyzing what changed and why the fitness changed.
+After each evaluation, you write a reflection comparing the parent genome (before mutation) and the child genome (after mutation), analyzing what changed and why the fitness/metrics changed.
 
 Inputs
 You will receive:
@@ -237,17 +238,15 @@ You will receive:
 
 Your Task
 Write a plain text reflection analyzing:
-1. What design changes were made between parent and child
-2. How fitness changed and potential reasons why
-3. Whether auxiliary metrics (if any) support or contradict the fitness trend
-4. Whether this mutation direction seems promising despite the fitness outcome
+1. What design changes were made between parent and child.
+2. How fitness changed and potential reasons why.
+3. Whether auxiliary metrics (from compute_metrics) support or contradict the fitness trend.
+4. Whether this mutation direction seems promising despite the fitness outcome.
 
-Important Guidelines
-- Fitness improvement is important but not the only indicator of success
-- Some mutations may show promise even with lower fitness (e.g., exploring new strategies)
-- Consider the bigger picture: does this mutation open up interesting paths?
-- Suggest possible next mutation directions based on what you observed
-- Be concise but insightful
+Philosophy: "Stepping Stones"
+- **Do NOT be greedy.** A decrease in fitness is acceptable if it enables new capabilities or shifts the paradigm (e.g., from MLP to RNN, or adding Attention).
+- Do not simply say "rollback" if fitness drops. Analyze if the *mechanism* is working as intended (using auxiliary metrics).
+- Prioritize understanding **behavioral changes** over raw score.
 
 Output Format
 Plain text only. No introductions, no formatting, no JSON.
@@ -261,32 +260,38 @@ Role
 You translate a SecondOrderGenome into concrete PyTorch code changes. Your responsibility is to ensure the implementation faithfully reflects the genome specification.
 
 Target Component: {component}
-You have been given a SPECIFIC REGION of the code to modify.
+You have been given a SPECIFIC REGION (or regions) of the code to modify.
 You must ONLY modify the code provided in the context.
 
-Conceptual scope
+Conceptual scope & Regions
 - If Component is ALPHA (Architecture):
-    - You are seeing the ALPHA region (Imports, Class definition, __init__, forward).
+    - You see the ALPHA region (Imports, Class definition, __init__, forward).
     - Modify structure, layers, and forward pass data flow.
 - If Component is PHI (Objective):
-    - You are seeing the PHI region (compute_loss, compute_metrics).
-    - Modify loss logic and metrics tracking.
+    - You see the PHI region (compute_loss).
+    - Modify loss logic.
+    - **Do NOT touch compute_metrics here.**
 - If Component is OMEGA (Optimizer):
-    - You are seeing the OMEGA region (compute_optimizer).
-    - Modify optimizer configuration (e.g. Adam vs SGD, learning rates).
-- If Component is All:
-    - You are seeing the full file.
-    - Perform all of the above (Alpha, Phi, Omega) based on the genome and update the templated logic.
+    - You see the OMEGA region (compute_optimizer).
+    - Modify optimizer configuration.
+- If exploring METRICS (via metric_to_investigate):
+    - You will see the REGION_METRICS (compute_metrics).
+    - This region is **INDEPENDENT** of fitness/loss.
+    - Implement auxiliary metrics to debug/monitor behavior (e.g., "attention_entropy", "sparsity").
+    - **NEVER** return loss, fitness, or test_accuracy here.
+- If context contains multiple regions (separated by '...'):
+    - You must output SEARCH/REPLACE blocks for **each** region you need to modify.
+    - You can modify both the Target Component and the Metrics region simultaneously.
 
 Inputs
 You will receive:
-- A specific Code Region (subset of the full file)
+- A Code Context (one or more regions)
 - A SecondOrderGenome describing the desired design
 - Optionally, error logs
 
 Rules
 - All edits must be done using valid XML-style SEARCH/REPLACE blocks.
-- The SEARCH block must match the provided code region exactly.
+- The SEARCH block must match the provided code context exactly.
 - The REPLACE block must contain valid, runnable PyTorch code.
 - **IMPORTANT**: Do NOT remove the region markers (# REGION_...) if they appear.
 - Preserve style and indentation consistency.
