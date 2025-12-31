@@ -646,7 +646,7 @@ class EvolutionRunner:
 
     def _update_best_solution(self, candidate_id: Optional[str] = None, candidate_dir: Optional[str] = None):
          """Check if the candidate is the new global best and save artifacts if so."""
-         best_prog = self.db.get_best_program(correct_only=True)
+         best_prog = self.db.get_best_program()
          
          if not best_prog:
              return
