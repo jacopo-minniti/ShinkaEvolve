@@ -581,8 +581,18 @@ class EvolutionRunner:
         genome = SecondOrderGenome.model_validate_json(job.genome_yaml)
         
         # Populate fitness in genome if available
+        # Populate fitness and metrics in genome if available
         if results and results.get("metrics"):
-            genome.fitness = results.get("metrics", {})
+            metrics_data = results.get("metrics", {})
+            genome.fitness = metrics_data.get("combined_score")
+            genome.metrics = {
+                "public": metrics_data.get("public", {}),
+                "private": metrics_data.get("private", {})
+            }
+            # Add time to private metrics
+            if genome.metrics["private"] is None:
+                genome.metrics["private"] = {}
+            genome.metrics["private"]["time"] = rtime
             
         # Attempt Reflection
         if job.parent_id:
@@ -614,6 +624,10 @@ class EvolutionRunner:
         else:
             logger.info("Skipping reflection for initial genome (no parent)")
         
+        # Save updated genome to disk (CRITICAL FIX)
+        with open(f"{job.job_dir}/genome.json", "w") as f:
+            f.write(genome.model_dump_json(indent=2))
+
         self._save_result_to_db(results, rtime, code, genome, job.parent_id, job.generation, job_dir=job.job_dir)
 
 

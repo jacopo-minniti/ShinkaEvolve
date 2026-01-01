@@ -53,6 +53,7 @@ class SecondOrderGenome(BaseSecondOrderGenome):
     parent_id: Optional[str] = None
     generation: int = 0
     generation: int = 0
-    fitness: Optional[Dict[str, Any]] = None  # Stores full metrics after evaluation
+    fitness: Optional[float] = None
+    metrics: Optional[Dict[str, Any]] = None
     reflection: Optional[str] = None # Reflection on the genome performance
     metadata: Dict[str, Any] = Field(default_factory=dict)  # Stores other metadata
