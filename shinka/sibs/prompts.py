@@ -79,10 +79,11 @@ Each bias entry in `biases` must contain ONLY:
 - `acts_on` (string: "alpha" | "phi" | "omega")
 - `intention` (string, why this bias is needed)
 - `metric_to_investigate` (object or null):
-  - **OPTIONAL**: Can be null if no auxiliary metric is needed
-  - If there is a good auxiliary metric to track, include it (very useful for reflection)
-  - Otherwise, leave null - reflection will focus on fitness delta and design changes
-  - **NEVER** use "loss", "test_accuracy", "success_rate" or any fitness metric
+  - **HIGHLY RECOMMENDED**: almost every bias should have a way to verify if it is working as intended!
+  - **CRITICAL**: This is for **AUXILIARY** behavior metrics only.
+  - **NEVER** use "loss", "test_accuracy", "success_rate" or any fitness metric (these are already tracked).
+  - Use this to check internal model state, e.g., "attention_entropy", "sparsity_ratio", "gradient_norm", "average_activation".
+  - If not null, must contain:
   - Valid examples: attention_entropy, sparsity_ratio, gradient_norm, memory_usage
   - If not null, must contain:
     - `name` (string)
@@ -147,6 +148,12 @@ Rules
 - Ensure the new design is valid JSON when patched.
 - Ensure the new design still implements the original first-order bias intent.
 
+Metric Investigation Strategy (CRITICAL):
+- When mutating, you should almost always ADD or UPDATE `metric_to_investigate`.
+- Why? Because fitness alone (loss/success) doesn't tell us *if the mechanism is working*.
+- Example: If adding a sparse layer, track "sparsity_ratio". If adding recurrence, track "hidden_state_variance".
+- **constraint**: Never track fitness/loss here. Only internal behavior.
+
 Edit format
 You must use SEARCH/REPLACE blocks to modify the JSON string.
 Matches must be exact (including whitespace/indentation).
@@ -165,63 +172,7 @@ Do not output anything other than SEARCH/REPLACE blocks.
 """
 
 
-IMPLEMENTATION_AGENT_SYS_PROMPT = """
-You are the Implementation Agent.
 
-Role
-You translate a SecondOrderGenome into concrete PyTorch code changes. Your responsibility is to ensure the implementation faithfully reflects the genome specification.
-
-Target Component: {component}
-You must ONLY modify the code relevant to this component.
-
-Conceptual scope
-- If Component is ALPHA (Architecture):
-    - Modify `__init__` to define layers/modules.
-    - Modify `forward` to change the main data flow through these layers.
-    - Do NOT touch `compute_loss` or `compute_metrics`.
-- If Component is PHI (Objective):
-    - Modify `compute_loss` to implement the loss function (this drives the gradient).
-    - Modify `compute_metrics` to track relevant auxiliary metrics for monitoring.
-    - **CRITICAL**: `compute_metrics` must **NEVER** compute or return:
-      - Loss (already tracked automatically)
-      - Test accuracy, success rate, or any fitness metric (that IS the fitness)
-    - Only compute auxiliary metrics mentioned in the bias's `metric_to_investigate`
-    - Valid examples: attention entropy, sparsity, gradient norms, layer activation stats
-    - If no auxiliary metric is needed, return `None` or empty dict `{}`
-    - Do NOT touch `__init__` or `forward`.
-- If Component is OMEGA (Optimizer):
-    - Modify `compute_optimizer` to define the optimization strategy.
-    - Do NOT touch `__init__`, `forward`, `compute_loss` or `compute_metrics`.
-
-Inputs
-You will receive:
-- Existing PyTorch code
-- A SecondOrderGenome describing the desired design
-- Optionally, `Previous Implementation Errors` (immediate feedback from this job).
-- Optionally, `Historical Errors` (failures from previous generations).
-- You MUST analyze ONLY errors relevant to the current component execution or logical flaws. Ignore transient system issues.
-
-Rules
-- All edits must be done using valid XML-style SEARCH/REPLACE blocks.
-- The SEARCH block must match the original code exactly, including indentation and whitespace.
-- The REPLACE block must contain valid, runnable PyTorch code.
-- Preserve style and indentation consistency.
-- If previous errors are provided, prioritize fixing them.
-- STRICTLY adhere to the component boundaries defined above.
-
-Edit format
-Use the following structure exactly (XML tags):
-
-<DIFF>
-<<<<<<< SEARCH
-# Original code to find (must match exactly)
-=======
-# New replacement code
->>>>>>> REPLACE
-</DIFF>
-
-Do not include commentary outside the DIFF blocks.
-"""
 
 
 REFLECTION_WRITER_SYS_PROMPT = """
@@ -278,7 +229,7 @@ Conceptual scope & Regions
     - You will see the REGION_METRICS (compute_metrics).
     - This region is **INDEPENDENT** of fitness/loss.
     - Implement auxiliary metrics to debug/monitor behavior (e.g., "attention_entropy", "sparsity").
-    - **NEVER** return loss, fitness, or test_accuracy here.
+    - **NEVER** return loss, fitness, or test_accuracy here. These are for *internal behavior* only.
 - If context contains multiple regions (separated by '...'):
     - You must output SEARCH/REPLACE blocks for **each** region you need to modify.
     - You can modify both the Target Component and the Metrics region simultaneously.
