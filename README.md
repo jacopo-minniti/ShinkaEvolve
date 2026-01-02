@@ -1,6 +1,6 @@
 <h1 align="center">
   <a href="shinka/favicon.png?raw=true"><img src="shinka/favicon.png?raw=true" width="180" /></a><br>
-  <b><code>ShinkaEvolve</code>: Deep Learning Architecture Evolution (SIBS)</b><br>
+  <b><code>ShinkaBias</code>: Deep Learning Architecture Evolution (SIBS)</b><br>
 </h1>
 
 <p align="center">
