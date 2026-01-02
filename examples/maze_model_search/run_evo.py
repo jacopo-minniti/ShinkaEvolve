@@ -78,7 +78,7 @@ Must be exposed as one of:
 3. `compute_loss(self, batch, outputs)`: Return scalar loss tensor
    - batch dict contains: 'obs', 'action', 'target', 'distance', 'mask'
    - 'mask' indicates valid (non-padded) timesteps: 1.0 = valid, 0.0 = padding
-4. **For stateful models only (if you use recurrent layers)**:
+4. **For stateful models only**:
    - `reset_state(self)`: Reset hidden states to None at the start of new episodes
    - Store hidden state as instance variable (e.g., self.hidden_state)
    - In forward(), initialize hidden state if None, otherwise use stored state
